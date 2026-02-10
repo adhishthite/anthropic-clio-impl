@@ -1,0 +1,49 @@
+[project]
+name = "ant-clio"
+version = "0.1.0"
+description = "CLIO-inspired pipeline for privacy-preserving analysis of AI conversation usage patterns"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.0",
+    "langsmith>=0.4.0",
+    "numpy>=2.0.0",
+    "openai>=1.60.0",
+    "plotly>=6.0.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "pyyaml>=6.0.0",
+    "scikit-learn>=1.6.0",
+    "streamlit>=1.42.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.15.0",
+]
+
+[project.scripts]
+clio = "clio_pipeline.cli:main"
+clio-generate-mock-data = "clio_pipeline.mock_data:main"
+clio-viz = "clio_pipeline.viz_ui.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clio_pipeline"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -79,3 +79,11 @@ storybook-static/
 *.log
 *.pid
 *.seed
+
+# keep source directories that match parent ignore patterns
+!src/lib/
+!src/lib/**
+!src/app/api/runs/
+!src/app/api/runs/**
+!src/app/api/stream/
+!src/app/api/stream/**

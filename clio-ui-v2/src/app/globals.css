@@ -7,8 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-manrope);
+  --font-mono: var(--font-ibm-plex-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,79 +48,189 @@
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --font-manrope: "Avenir Next", "Gill Sans", "Segoe UI";
+  --font-fraunces: "Iowan Old Style", "Palatino Linotype", "Book Antiqua";
+  --font-ibm-plex-mono: "Berkeley Mono", "SFMono-Regular", Menlo;
+  --radius: 0.875rem;
+  --background: oklch(0.982 0.009 86.4);
+  --foreground: oklch(0.26 0.026 235.6);
+  --card: oklch(0.995 0.003 95.4);
+  --card-foreground: oklch(0.255 0.025 235.1);
+  --popover: oklch(0.995 0.003 95.4);
+  --popover-foreground: oklch(0.255 0.025 235.1);
+  --primary: oklch(0.463 0.101 241.8);
+  --primary-foreground: oklch(0.98 0.008 97.5);
+  --secondary: oklch(0.95 0.022 78.5);
+  --secondary-foreground: oklch(0.32 0.03 232.9);
+  --muted: oklch(0.951 0.012 90.2);
+  --muted-foreground: oklch(0.52 0.023 232.8);
+  --accent: oklch(0.91 0.042 173.4);
+  --accent-foreground: oklch(0.288 0.03 201.6);
+  --destructive: oklch(0.602 0.204 24.1);
+  --border: oklch(0.88 0.015 88.5);
+  --input: oklch(0.9 0.014 88.3);
+  --ring: oklch(0.56 0.09 236.5);
+  --chart-1: oklch(0.59 0.17 242.4);
+  --chart-2: oklch(0.66 0.115 173.9);
+  --chart-3: oklch(0.73 0.12 66.7);
+  --chart-4: oklch(0.68 0.14 18.6);
+  --chart-5: oklch(0.52 0.122 320.2);
+  --sidebar: oklch(0.986 0.006 91.1);
+  --sidebar-foreground: oklch(0.26 0.026 235.6);
+  --sidebar-primary: oklch(0.463 0.101 241.8);
+  --sidebar-primary-foreground: oklch(0.98 0.008 97.5);
+  --sidebar-accent: oklch(0.93 0.035 172.4);
+  --sidebar-accent-foreground: oklch(0.288 0.03 201.6);
+  --sidebar-border: oklch(0.88 0.015 88.5);
+  --sidebar-ring: oklch(0.56 0.09 236.5);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.2 0.021 239.1);
+  --foreground: oklch(0.958 0.007 95.2);
+  --card: oklch(0.24 0.022 236.7);
+  --card-foreground: oklch(0.958 0.007 95.2);
+  --popover: oklch(0.24 0.022 236.7);
+  --popover-foreground: oklch(0.958 0.007 95.2);
+  --primary: oklch(0.74 0.1 191.9);
+  --primary-foreground: oklch(0.18 0.03 238.2);
+  --secondary: oklch(0.322 0.027 240.2);
+  --secondary-foreground: oklch(0.938 0.008 96);
+  --muted: oklch(0.31 0.02 240.7);
+  --muted-foreground: oklch(0.77 0.018 88.1);
+  --accent: oklch(0.69 0.108 58.4);
+  --accent-foreground: oklch(0.2 0.021 239.1);
+  --destructive: oklch(0.69 0.18 28.1);
+  --border: oklch(1 0 0 / 14%);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.74 0.1 191.9);
+  --chart-1: oklch(0.72 0.11 192.3);
+  --chart-2: oklch(0.7 0.109 63.2);
+  --chart-3: oklch(0.66 0.15 21.9);
+  --chart-4: oklch(0.75 0.1 307.5);
+  --chart-5: oklch(0.8 0.09 148.8);
+  --sidebar: oklch(0.23 0.021 238.9);
+  --sidebar-foreground: oklch(0.958 0.007 95.2);
+  --sidebar-primary: oklch(0.74 0.1 191.9);
+  --sidebar-primary-foreground: oklch(0.18 0.03 238.2);
+  --sidebar-accent: oklch(0.32 0.027 240.2);
+  --sidebar-accent-foreground: oklch(0.938 0.008 96);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --sidebar-ring: oklch(0.74 0.1 191.9);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background:
+      radial-gradient(
+        circle at 12% -10%,
+        color-mix(in oklab, var(--accent) 36%, transparent),
+        transparent 48%
+      ),
+      radial-gradient(
+        circle at 84% -12%,
+        color-mix(in oklab, var(--primary) 30%, transparent),
+        transparent 44%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--background) 78%, white 22%) 0%,
+        var(--background) 46%,
+        color-mix(in oklab, var(--background) 92%, black 8%) 100%
+      );
+    min-height: 100vh;
+    font-family: var(--font-manrope), "Avenir Next", "Segoe UI", sans-serif;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  .clio-display {
+    font-family:
+      var(--font-fraunces), "Iowan Old Style", "Times New Roman", serif;
+    font-weight: 550;
+    letter-spacing: -0.02em;
+  }
+
+  code,
+  pre {
+    font-family:
+      var(--font-ibm-plex-mono), ui-monospace, "SFMono-Regular", Menlo,
+      monospace;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 24%, transparent);
+    color: var(--foreground);
+  }
+}
+
+@layer utilities {
+  .clio-shell {
+    @apply relative overflow-hidden rounded-3xl border border-border/75 bg-card/75 backdrop-blur-xl;
+    box-shadow:
+      0 24px 50px -32px color-mix(in oklab, var(--primary) 36%, transparent),
+      0 10px 24px -18px rgba(0, 0, 0, 0.35);
+  }
+
+  .clio-panel {
+    @apply rounded-2xl border border-border/70 bg-card/85 backdrop-blur-md;
+    box-shadow: inset 0 1px 0 color-mix(in oklab, white 45%, transparent);
+  }
+
+  .clio-panel-subtle {
+    @apply rounded-xl border border-border/60 bg-muted/35;
+  }
+
+  .clio-kicker {
+    @apply text-[10px] font-semibold tracking-[0.22em] uppercase text-muted-foreground;
+  }
+
+  .clio-grid-pattern {
+    background-image:
+      linear-gradient(
+        to right,
+        color-mix(in oklab, var(--border) 66%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in oklab, var(--border) 66%, transparent) 1px,
+        transparent 1px
+      );
+    background-size: 32px 32px;
+    mask-image: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.7),
+      rgba(255, 255, 255, 0.08)
+    );
+  }
+
+  .clio-orb {
+    position: absolute;
+    pointer-events: none;
+    filter: blur(60px);
+    border-radius: 9999px;
+    animation: clio-float 16s ease-in-out infinite;
+  }
+}
+
+@keyframes clio-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, 12px, 0) scale(1.07);
   }
 }

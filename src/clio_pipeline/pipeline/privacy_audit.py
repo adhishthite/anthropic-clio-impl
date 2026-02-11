@@ -154,17 +154,12 @@ def _build_privacy_audit_batch_user_prompt(*, stage: str, items: list[tuple[str,
     sections: list[str] = []
     for index, (content_id, content) in enumerate(items, start=1):
         sections.append(
-            f"Item {index}\n"
-            f"content_id: {content_id}\n"
-            "<content>\n"
-            f"{content}\n"
-            "</content>\n"
+            f"Item {index}\ncontent_id: {content_id}\n<content>\n{content}\n</content>\n"
         )
 
     return (
         "Assess privacy preservation for each content item.\n"
-        f"stage: {stage}\n\n"
-        + "\n---\n".join(sections)
+        f"stage: {stage}\n\n" + "\n---\n".join(sections)
     )
 
 

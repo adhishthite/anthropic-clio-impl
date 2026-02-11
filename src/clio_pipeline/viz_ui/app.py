@@ -29,7 +29,7 @@ def _parse_app_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--allow-raw-messages", action="store_true")
     parser.add_argument("--live", action="store_true")
-    parser.add_argument("--refresh-seconds", type=int, default=4)
+    parser.add_argument("--refresh-seconds", type=int, default=30)
     args, _ = parser.parse_known_args()
     return args
 
@@ -223,6 +223,10 @@ def _build_ui_run_command(
         command.append("--with-labeling")
     if options.get("with_hierarchy"):
         command.append("--with-hierarchy")
+        hierarchy_levels_raw = options.get("hierarchy_levels")
+        if isinstance(hierarchy_levels_raw, int):
+            hierarchy_levels = max(2, min(20, int(hierarchy_levels_raw)))
+            command.extend(["--hierarchy-levels", str(hierarchy_levels)])
     if options.get("with_privacy"):
         command.append("--with-privacy")
     if options.get("with_eval"):
@@ -757,6 +761,30 @@ def _render_conversations(data: dict, *, allow_raw_messages: bool) -> None:
                 st.json(analysis)
 
 
+def _render_selected_page(
+    selected_page: str,
+    run_data: dict[str, Any],
+    *,
+    allow_raw_messages: bool,
+) -> None:
+    """Render selected non-ingest page for one run payload."""
+
+    if selected_page == "Overview":
+        _render_overview(run_data)
+    elif selected_page == "Cluster Map":
+        _render_cluster_map(run_data)
+    elif selected_page == "Hierarchy":
+        _render_hierarchy(run_data)
+    elif selected_page == "Privacy":
+        _render_privacy(run_data)
+    elif selected_page == "Evaluation":
+        _render_evaluation(run_data)
+    elif selected_page == "Artifacts":
+        _render_artifacts(run_data)
+    elif selected_page == "Conversations":
+        _render_conversations(run_data, allow_raw_messages=allow_raw_messages)
+
+
 def _render_ingest_and_run(args: argparse.Namespace) -> None:
     """Render UI controls for upload, validation, and run launch."""
 
@@ -791,9 +819,7 @@ def _render_ingest_and_run(args: argparse.Namespace) -> None:
                 st.error(str(exc))
             else:
                 st.session_state["ingest_input_path"] = saved_path.as_posix()
-                st.success(
-                    f"Saved: {saved_path.as_posix()} ({_format_bytes(saved_size)})"
-                )
+                st.success(f"Saved: {saved_path.as_posix()} ({_format_bytes(saved_size)})")
 
     default_path = str(st.session_state.get("ingest_input_path", ""))
     input_path_raw = st.text_input(
@@ -842,6 +868,14 @@ def _render_ingest_and_run(args: argparse.Namespace) -> None:
         with_clustering = st.checkbox("Run clustering (phase3)", value=True)
         with_labeling = st.checkbox("Run labeling (phase4)", value=True)
         with_hierarchy = st.checkbox("Run hierarchy", value=True)
+        hierarchy_levels = st.number_input(
+            "Hierarchy levels (2-20)",
+            min_value=2,
+            max_value=20,
+            value=5,
+            step=1,
+            disabled=not with_hierarchy,
+        )
         with_privacy = st.checkbox("Run privacy audit", value=True)
         with_eval = st.checkbox("Run evaluation", value=True)
 
@@ -898,6 +932,7 @@ def _render_ingest_and_run(args: argparse.Namespace) -> None:
                 "with_clustering": with_clustering,
                 "with_labeling": with_labeling,
                 "with_hierarchy": with_hierarchy,
+                "hierarchy_levels": int(hierarchy_levels),
                 "with_privacy": with_privacy,
                 "with_eval": with_eval,
                 "limit": int(limit_value) if int(limit_value) > 0 else None,
@@ -996,9 +1031,9 @@ def main() -> None:
         live_mode = st.toggle("Live mode", value=bool(args.live))
         refresh_seconds = st.slider(
             "Refresh interval (seconds)",
-            min_value=2,
-            max_value=30,
-            value=max(2, int(args.refresh_seconds)),
+            min_value=30,
+            max_value=300,
+            value=max(30, int(args.refresh_seconds)),
             disabled=not live_mode,
         )
 
@@ -1056,9 +1091,8 @@ def main() -> None:
 
     should_auto_refresh = live_mode and selected_page != "Ingest & Run"
     if should_auto_refresh:
-        st.markdown(
-            f"<meta http-equiv='refresh' content='{refresh_seconds}'>",
-            unsafe_allow_html=True,
+        st.caption(
+            f"Live refresh every {int(refresh_seconds)}s (in-app refresh, no full-page reload)."
         )
 
     if selected_page == "Ingest & Run":
@@ -1069,26 +1103,43 @@ def main() -> None:
         st.info("No run manifests found yet. Use the `Ingest & Run` page to start one.")
         return
 
+    if should_auto_refresh:
+
+        @st.fragment(run_every=f"{int(refresh_seconds)}s")
+        def _live_run_fragment() -> None:
+            latest_runs = discover_runs(Path(args.runs_root))
+            if not latest_runs:
+                st.info("No run manifests found yet. Use the `Ingest & Run` page to start one.")
+                return
+
+            latest_run_ids = [str(item["run_id"]) for item in latest_runs]
+            active_run_id = (
+                selected_run_id if selected_run_id in latest_run_ids else latest_run_ids[0]
+            )
+            selected_run = next(
+                item for item in latest_runs if str(item["run_id"]) == active_run_id
+            )
+            run_data = load_run_artifacts(Path(str(selected_run["run_root"])))
+            _render_selected_page(
+                selected_page,
+                run_data,
+                allow_raw_messages=args.allow_raw_messages,
+            )
+
+        _live_run_fragment()
+        return
+
     selected_run = next(item for item in runs if str(item["run_id"]) == selected_run_id)
     if live_mode:
         run_data = load_run_artifacts(Path(str(selected_run["run_root"])))
     else:
         run_data = _cached_load_run(str(selected_run["run_root"]))
 
-    if selected_page == "Overview":
-        _render_overview(run_data)
-    elif selected_page == "Cluster Map":
-        _render_cluster_map(run_data)
-    elif selected_page == "Hierarchy":
-        _render_hierarchy(run_data)
-    elif selected_page == "Privacy":
-        _render_privacy(run_data)
-    elif selected_page == "Evaluation":
-        _render_evaluation(run_data)
-    elif selected_page == "Artifacts":
-        _render_artifacts(run_data)
-    elif selected_page == "Conversations":
-        _render_conversations(run_data, allow_raw_messages=args.allow_raw_messages)
+    _render_selected_page(
+        selected_page,
+        run_data,
+        allow_raw_messages=args.allow_raw_messages,
+    )
 
 
 if __name__ == "__main__":

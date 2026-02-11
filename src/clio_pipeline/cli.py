@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
@@ -61,13 +63,20 @@ def _format_duration(seconds: float) -> str:
 class _EtaProgressPrinter:
     """Print throttled progress updates with elapsed time and ETA."""
 
-    def __init__(self, label: str, *, min_interval_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        label: str,
+        *,
+        min_interval_seconds: float = 2.0,
+        event_callback: Callable[[int, int, str], None] | None = None,
+    ) -> None:
         self._label = label
         self._started_at = time.perf_counter()
         self._last_print_at = 0.0
         self._last_done = -1
         self._last_bucket = -1
         self._min_interval_seconds = min_interval_seconds
+        self._event_callback = event_callback
 
     def __call__(self, done: int, total: int, detail: str = "") -> None:
         capped_total = max(total, 1)
@@ -102,6 +111,82 @@ class _EtaProgressPrinter:
         self._last_print_at = now
         self._last_done = capped_done
         self._last_bucket = bucket
+        if self._event_callback is not None:
+            with suppress(Exception):
+                self._event_callback(capped_done, capped_total, detail)
+
+
+class _RunEventLogger:
+    """Append structured run events to run_events.jsonl."""
+
+    def __init__(self, *, min_progress_interval_seconds: float = 2.0) -> None:
+        self._path: Path | None = None
+        self._last_progress_emit_at: dict[str, float] = {}
+        self._last_progress_bucket: dict[str, int] = {}
+        self._min_progress_interval_seconds = min_progress_interval_seconds
+
+    def bind(self, path: Path) -> None:
+        self._path = path
+
+    def emit(
+        self,
+        *,
+        event_type: str,
+        phase: str | None = None,
+        status: str | None = None,
+        message: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        if self._path is None:
+            return
+        payload: dict[str, object] = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "event_type": event_type,
+        }
+        if phase is not None and phase.strip():
+            payload["phase"] = phase
+        if status is not None and status.strip():
+            payload["status"] = status
+        if message is not None and message.strip():
+            payload["message"] = message
+        if details:
+            payload.update(details)
+        with suppress(OSError):
+            append_jsonl(self._path, [payload])
+
+    def emit_progress(self, *, phase: str, done: int, total: int, detail: str = "") -> None:
+        if self._path is None:
+            return
+        capped_total = max(total, 1)
+        capped_done = max(0, min(done, capped_total))
+        percent = capped_done / capped_total
+        bucket = int(percent * 20)
+        now = time.perf_counter()
+        last_bucket = self._last_progress_bucket.get(phase, -1)
+        last_at = self._last_progress_emit_at.get(phase, 0.0)
+        should_emit = (
+            capped_done == 1
+            or capped_done >= capped_total
+            or bucket > last_bucket
+            or (now - last_at) >= self._min_progress_interval_seconds
+        )
+        if not should_emit:
+            return
+        self._last_progress_bucket[phase] = bucket
+        self._last_progress_emit_at[phase] = now
+        details: dict[str, object] = {
+            "done": capped_done,
+            "total": capped_total,
+            "progress_percent": round(percent * 100, 2),
+        }
+        if detail:
+            details["detail"] = detail
+        self.emit(
+            event_type="phase_progress",
+            phase=phase,
+            status="running",
+            details=details,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -193,6 +278,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--with-hierarchy",
         action="store_true",
         help="Run Phase 4 hierarchy scaffold (implies --with-labeling).",
+    )
+    run_parser.add_argument(
+        "--hierarchy-levels",
+        type=int,
+        default=None,
+        help=("Override hierarchy depth for this run only. Values are clamped to range [2, 20]."),
     )
     run_parser.add_argument(
         "--with-privacy",
@@ -429,9 +520,7 @@ def _estimate_run_preflight(
     if run_privacy:
         raw_audit = min(settings.privacy_audit_raw_sample_size, conversation_count)
         validation_cases = (
-            max(0, min(20, conversation_count))
-            if settings.privacy_validation_enabled
-            else 0
+            max(0, min(20, conversation_count)) if settings.privacy_validation_enabled else 0
         )
         privacy_requests = raw_audit + conversation_count + cluster_estimate + validation_cases
     eval_requests = 3 if run_eval else 0
@@ -458,10 +547,9 @@ def _estimate_run_preflight(
     output_cost_per_1m = settings.openai_output_cost_per_1m_tokens
     estimated_cost_usd: float | None = None
     if input_cost_per_1m is not None and output_cost_per_1m is not None:
-        estimated_cost_usd = (
-            (prompt_tokens / 1_000_000) * input_cost_per_1m
-            + (completion_tokens / 1_000_000) * output_cost_per_1m
-        )
+        estimated_cost_usd = (prompt_tokens / 1_000_000) * input_cost_per_1m + (
+            completion_tokens / 1_000_000
+        ) * output_cost_per_1m
 
     estimated_seconds = (
         (facet_requests / max(1, settings.facet_max_concurrency)) * 2.0
@@ -582,9 +670,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         {
             "name": "langsmith_config",
             "status": (
-                "pass"
-                if (not tracing_enabled or bool(langsmith["api_key_present"]))
-                else "warn"
+                "pass" if (not tracing_enabled or bool(langsmith["api_key_present"])) else "warn"
             ),
             "detail": (
                 "enabled+key_set"
@@ -743,6 +829,24 @@ def _cmd_run_unlocked(
     phase_metrics: list[dict] = []
     dataset_path = _resolve_dataset_path(settings, args)
     conversations = []
+    run_events_path: Path | None = None
+    event_logger = _RunEventLogger()
+
+    def _emit_run_event(
+        *,
+        event_type: str,
+        phase: str | None = None,
+        status: str | None = None,
+        message: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        event_logger.emit(
+            event_type=event_type,
+            phase=phase,
+            status=status,
+            message=message,
+            details=details,
+        )
 
     def _record_phase_metric(
         *,
@@ -761,6 +865,12 @@ def _cmd_run_unlocked(
         if details:
             metric.update(details)
         phase_metrics.append(metric)
+        _emit_run_event(
+            event_type="phase_metric",
+            phase=phase,
+            status=status,
+            details=metric,
+        )
 
     phase1_started = time.perf_counter()
     if not args.skip_input_validation:
@@ -832,6 +942,21 @@ def _cmd_run_unlocked(
         print(f"Run initialization failed: {exc}")
         sys.exit(1)
 
+    run_events_path = run_root / "run_events.jsonl"
+    event_logger.bind(run_events_path)
+    _emit_run_event(
+        event_type="run_started",
+        status="running",
+        message="Pipeline run initialized.",
+        details={
+            "run_id": run_id,
+            "run_root": str(run_root),
+            "dataset_path": str(dataset_path),
+            "streaming_mode": streaming_mode,
+            "resume_mode": resume_mode,
+        },
+    )
+
     print("Phase 1 complete: loaded mock conversation corpus.")
     print(f"  Run ID:             {run_id}")
     print(f"  Run directory:      {run_root}")
@@ -868,6 +993,11 @@ def _cmd_run_unlocked(
         run_warnings.append(message)
         print("")
         print(f"WARNING: {message}")
+        _emit_run_event(
+            event_type="run_warning",
+            status="warning",
+            message=message,
+        )
 
     if should_run_privacy and not args.with_labeling:
         print("")
@@ -906,6 +1036,17 @@ def _cmd_run_unlocked(
         print(f"  Estimated cost:      ${estimated_cost_usd:.4f} USD")
     else:
         print("  Estimated cost:      n/a (set token price settings to enable)")
+    _emit_run_event(
+        event_type="preflight_estimate",
+        status="info",
+        details={
+            "cluster_estimate": int(preflight["cluster_estimate"]),
+            "total_llm_requests": int(preflight["total_llm_requests"]),
+            "total_tokens": int(preflight["total_tokens"]),
+            "estimated_seconds": float(preflight["estimated_seconds"]),
+            "estimated_cost_usd": preflight["estimated_cost_usd"],
+        },
+    )
 
     if not should_run_facets and not should_run_eval:
         print("")
@@ -915,6 +1056,12 @@ def _cmd_run_unlocked(
         print("Use `clio run --with-hierarchy` for hierarchy scaffolding.")
         print("Use `clio run --with-privacy` for privacy auditing and gating.")
         print("Use `clio run --with-eval` for Phase 6 synthetic evaluation.")
+        _emit_run_event(
+            event_type="run_finished",
+            status="completed",
+            message="Run completed after Phase 1 only.",
+            details={"phase_metrics_count": len(phase_metrics)},
+        )
         return
 
     facets = []
@@ -922,6 +1069,12 @@ def _cmd_run_unlocked(
     phase2_status = "skipped" if not should_run_facets else "pending"
     phase2_mode = "none"
     if should_run_facets:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase2_facet_extraction",
+            status="running",
+            message="Phase 2 started.",
+        )
         if resume_mode:
             facets = load_phase2_facets(run_root)
             if facets:
@@ -930,11 +1083,27 @@ def _cmd_run_unlocked(
                 print(f"  Processed:          {len(facets)}")
                 phase2_status = "resumed"
                 phase2_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase2_facet_extraction",
+                    status="resumed",
+                    details={"processed_count": len(facets)},
+                )
         if not facets:
             try:
                 print("")
                 print("Phase 2 running: facet extraction in progress...")
-                phase2_progress = _EtaProgressPrinter("phase2")
+                phase2_progress = _EtaProgressPrinter(
+                    "phase2",
+                    event_callback=(
+                        lambda done, total, detail: event_logger.emit_progress(
+                            phase="phase2_facet_extraction",
+                            done=done,
+                            total=total,
+                            detail=detail,
+                        )
+                    ),
+                )
                 if streaming_mode:
                     facets, run_root = run_phase2_facet_extraction_streaming(
                         settings=settings,
@@ -966,6 +1135,12 @@ def _cmd_run_unlocked(
                 print("Phase 2 complete: extracted conversation facets.")
                 print(f"  Processed:          {len(facets)}")
                 print(f"  Output directory:   {run_root}")
+                _emit_run_event(
+                    event_type="phase_completed",
+                    phase="phase2_facet_extraction",
+                    status="completed",
+                    details={"processed_count": len(facets)},
+                )
     _record_phase_metric(
         phase="phase2_facet_extraction",
         status=phase2_status,
@@ -992,6 +1167,12 @@ def _cmd_run_unlocked(
     if not should_run_clustering:
         cluster_summaries = []
     else:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase3_base_clustering",
+            status="running",
+            message="Phase 3 started.",
+        )
         cluster_summaries = []
         if resume_mode:
             cluster_summaries = load_phase3_cluster_summaries(run_root)
@@ -1003,6 +1184,15 @@ def _cmd_run_unlocked(
                 print(f"  Kept clusters:      {kept_count}")
                 phase3_status = "resumed"
                 phase3_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase3_base_clustering",
+                    status="resumed",
+                    details={
+                        "cluster_count": len(cluster_summaries),
+                        "kept_cluster_count": kept_count,
+                    },
+                )
         if not cluster_summaries:
             if not facets:
                 _warn("Phase 3 skipped: no facets available.")
@@ -1012,7 +1202,17 @@ def _cmd_run_unlocked(
                 try:
                     print("")
                     print("Phase 3 running: embedding + clustering in progress...")
-                    phase3_progress = _EtaProgressPrinter("phase3")
+                    phase3_progress = _EtaProgressPrinter(
+                        "phase3",
+                        event_callback=(
+                            lambda done, total, detail: event_logger.emit_progress(
+                                phase="phase3_base_clustering",
+                                done=done,
+                                total=total,
+                                detail=detail,
+                            )
+                        ),
+                    )
                     cluster_summaries, run_root = run_phase3_base_clustering(
                         settings=settings,
                         conversations=conversations,
@@ -1035,6 +1235,15 @@ def _cmd_run_unlocked(
                     print(f"  Total clusters:     {len(cluster_summaries)}")
                     print(f"  Kept clusters:      {kept_count}")
                     print(f"  Output directory:   {run_root}")
+                    _emit_run_event(
+                        event_type="phase_completed",
+                        phase="phase3_base_clustering",
+                        status="completed",
+                        details={
+                            "cluster_count": len(cluster_summaries),
+                            "kept_cluster_count": kept_count,
+                        },
+                    )
     _record_phase_metric(
         phase="phase3_base_clustering",
         status=phase3_status,
@@ -1051,6 +1260,12 @@ def _cmd_run_unlocked(
     if not should_run_labeling:
         labeled_clusters = []
     else:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase4_cluster_labeling",
+            status="running",
+            message="Phase 4 labeling started.",
+        )
         labeled_clusters = []
         if resume_mode:
             labeled_clusters = load_phase4_labeled_clusters(run_root)
@@ -1060,6 +1275,12 @@ def _cmd_run_unlocked(
                 print(f"  Labeled clusters:   {len(labeled_clusters)}")
                 phase4_label_status = "resumed"
                 phase4_label_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase4_cluster_labeling",
+                    status="resumed",
+                    details={"labeled_cluster_count": len(labeled_clusters)},
+                )
         if not labeled_clusters:
             if not cluster_summaries:
                 _warn("Phase 4 labeling skipped: no cluster summaries available.")
@@ -1069,7 +1290,17 @@ def _cmd_run_unlocked(
                 try:
                     print("")
                     print("Phase 4 running: cluster labeling in progress...")
-                    phase4_label_progress = _EtaProgressPrinter("phase4-label")
+                    phase4_label_progress = _EtaProgressPrinter(
+                        "phase4-label",
+                        event_callback=(
+                            lambda done, total, detail: event_logger.emit_progress(
+                                phase="phase4_cluster_labeling",
+                                done=done,
+                                total=total,
+                                detail=detail,
+                            )
+                        ),
+                    )
                     labeled_clusters, run_root = run_phase4_cluster_labeling(
                         settings=settings,
                         facets=facets,
@@ -1091,6 +1322,12 @@ def _cmd_run_unlocked(
                     print("Phase 4 complete: generated cluster labels.")
                     print(f"  Labeled clusters:   {len(labeled_clusters)}")
                     print(f"  Output directory:   {run_root}")
+                    _emit_run_event(
+                        event_type="phase_completed",
+                        phase="phase4_cluster_labeling",
+                        status="completed",
+                        details={"labeled_cluster_count": len(labeled_clusters)},
+                    )
     _record_phase_metric(
         phase="phase4_cluster_labeling",
         status=phase4_label_status,
@@ -1106,6 +1343,12 @@ def _cmd_run_unlocked(
     phase4_hierarchy_mode = "none"
     hierarchy = {}
     if should_run_hierarchy:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase4_hierarchy_scaffold",
+            status="running",
+            message="Phase 4 hierarchy started.",
+        )
         hierarchy = {}
         if resume_mode:
             hierarchy = load_phase4_hierarchy(run_root)
@@ -1116,6 +1359,15 @@ def _cmd_run_unlocked(
                 print(f"  Leaf clusters:      {hierarchy['leaf_cluster_count']}")
                 phase4_hierarchy_status = "resumed"
                 phase4_hierarchy_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase4_hierarchy_scaffold",
+                    status="resumed",
+                    details={
+                        "top_level_cluster_count": int(hierarchy["top_level_cluster_count"]),
+                        "leaf_cluster_count": int(hierarchy["leaf_cluster_count"]),
+                    },
+                )
         if not hierarchy:
             if not labeled_clusters:
                 _warn("Phase 4 hierarchy skipped: no labeled clusters available.")
@@ -1125,7 +1377,17 @@ def _cmd_run_unlocked(
                 try:
                     print("")
                     print("Phase 4 running: hierarchy construction in progress...")
-                    phase4_hierarchy_progress = _EtaProgressPrinter("phase4-hierarchy")
+                    phase4_hierarchy_progress = _EtaProgressPrinter(
+                        "phase4-hierarchy",
+                        event_callback=(
+                            lambda done, total, detail: event_logger.emit_progress(
+                                phase="phase4_hierarchy_scaffold",
+                                done=done,
+                                total=total,
+                                detail=detail,
+                            )
+                        ),
+                    )
                     hierarchy, run_root = run_phase4_hierarchy_scaffold(
                         settings=settings,
                         labeled_clusters=labeled_clusters,
@@ -1146,6 +1408,15 @@ def _cmd_run_unlocked(
                     print(f"  Top-level clusters: {hierarchy['top_level_cluster_count']}")
                     print(f"  Leaf clusters:      {hierarchy['leaf_cluster_count']}")
                     print(f"  Output directory:   {run_root}")
+                    _emit_run_event(
+                        event_type="phase_completed",
+                        phase="phase4_hierarchy_scaffold",
+                        status="completed",
+                        details={
+                            "top_level_cluster_count": int(hierarchy["top_level_cluster_count"]),
+                            "leaf_cluster_count": int(hierarchy["leaf_cluster_count"]),
+                        },
+                    )
     _record_phase_metric(
         phase="phase4_hierarchy_scaffold",
         status=phase4_hierarchy_status,
@@ -1167,6 +1438,12 @@ def _cmd_run_unlocked(
     privacy_summary = {}
     gated_clusters = []
     if should_run_privacy:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase5_privacy_audit",
+            status="running",
+            message="Phase 5 privacy started.",
+        )
         privacy_summary = {}
         gated_clusters = []
         if resume_mode:
@@ -1177,6 +1454,15 @@ def _cmd_run_unlocked(
                 print(f"  Cluster pass rate: {privacy_summary['cluster_summary']['pass_rate']:.2%}")
                 phase5_status = "resumed"
                 phase5_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase5_privacy_audit",
+                    status="resumed",
+                    details={
+                        "cluster_count": len(gated_clusters),
+                        "cluster_pass_rate": float(privacy_summary["cluster_summary"]["pass_rate"]),
+                    },
+                )
         if not privacy_summary or not gated_clusters:
             if not facets or not labeled_clusters:
                 _warn("Phase 5 privacy skipped: missing facets or labeled clusters.")
@@ -1186,7 +1472,17 @@ def _cmd_run_unlocked(
                 try:
                     print("")
                     print("Phase 5 running: privacy auditing in progress...")
-                    phase5_progress = _EtaProgressPrinter("phase5")
+                    phase5_progress = _EtaProgressPrinter(
+                        "phase5",
+                        event_callback=(
+                            lambda done, total, detail: event_logger.emit_progress(
+                                phase="phase5_privacy_audit",
+                                done=done,
+                                total=total,
+                                detail=detail,
+                            )
+                        ),
+                    )
                     privacy_summary, gated_clusters, run_root = run_phase5_privacy_audit(
                         settings=settings,
                         conversations=conversations,
@@ -1217,6 +1513,20 @@ def _cmd_run_unlocked(
                         f"{len(gated_clusters)}"
                     )
                     print(f"  Output directory:   {run_root}")
+                    _emit_run_event(
+                        event_type="phase_completed",
+                        phase="phase5_privacy_audit",
+                        status="completed",
+                        details={
+                            "cluster_count": len(gated_clusters),
+                            "clusters_kept": int(
+                                sum(1 for item in gated_clusters if item["final_kept"])
+                            ),
+                            "cluster_pass_rate": float(
+                                privacy_summary["cluster_summary"]["pass_rate"]
+                            ),
+                        },
+                    )
     _record_phase_metric(
         phase="phase5_privacy_audit",
         status=phase5_status,
@@ -1237,6 +1547,12 @@ def _cmd_run_unlocked(
     phase6_mode = "none"
     eval_results = {}
     if should_run_eval:
+        _emit_run_event(
+            event_type="phase_started",
+            phase="phase6_evaluation",
+            status="running",
+            message="Phase 6 evaluation started.",
+        )
         eval_results = {}
         if resume_mode:
             eval_results = load_phase6_evaluation(run_root)
@@ -1248,11 +1564,30 @@ def _cmd_run_unlocked(
                 print(f"  Privacy-summary F1: {privacy_metrics['macro_f1']:.3f}")
                 phase6_status = "resumed"
                 phase6_mode = "resume"
+                _emit_run_event(
+                    event_type="phase_resumed",
+                    phase="phase6_evaluation",
+                    status="resumed",
+                    details={
+                        "synthetic_count": int(eval_results["synthetic_count"]),
+                        "privacy_summary_macro_f1": float(privacy_metrics["macro_f1"]),
+                    },
+                )
         if not eval_results:
             try:
                 print("")
                 print("Phase 6 running: synthetic evaluation in progress...")
-                phase6_progress = _EtaProgressPrinter("phase6")
+                phase6_progress = _EtaProgressPrinter(
+                    "phase6",
+                    event_callback=(
+                        lambda done, total, detail: event_logger.emit_progress(
+                            phase="phase6_evaluation",
+                            done=done,
+                            total=total,
+                            detail=detail,
+                        )
+                    ),
+                )
                 eval_results, run_root = run_phase6_evaluation(
                     settings=settings,
                     run_root=run_root,
@@ -1280,6 +1615,20 @@ def _cmd_run_unlocked(
                     f"{eval_results['ablations']['raw_user_text']['accuracy']:.3f}"
                 )
                 print(f"  Output directory:    {run_root}")
+                _emit_run_event(
+                    event_type="phase_completed",
+                    phase="phase6_evaluation",
+                    status="completed",
+                    details={
+                        "synthetic_count": int(eval_results["synthetic_count"]),
+                        "privacy_summary_accuracy": float(
+                            eval_results["ablations"]["privacy_summary"]["accuracy"]
+                        ),
+                        "raw_user_text_accuracy": float(
+                            eval_results["ablations"]["raw_user_text"]["accuracy"]
+                        ),
+                    },
+                )
     _record_phase_metric(
         phase="phase6_evaluation",
         status=phase6_status,
@@ -1302,17 +1651,9 @@ def _cmd_run_unlocked(
         if isinstance(loaded_manifest, dict):
             manifest = loaded_manifest
 
-    phase_metric_events = [
-        {
-            "timestamp_utc": datetime.now(UTC).isoformat(),
-            "event_type": "phase_metric",
-            **metric,
-        }
-        for metric in phase_metrics
-    ]
-    run_events_path = run_root / "run_events.jsonl"
-    if phase_metric_events:
-        append_jsonl(run_events_path, phase_metric_events)
+    if run_events_path is None:
+        run_events_path = run_root / "run_events.jsonl"
+        event_logger.bind(run_events_path)
 
     phase_llm_metrics = {
         "phase2_facet_extraction": manifest.get("phase2_openai_metrics", {}),
@@ -1376,6 +1717,15 @@ def _cmd_run_unlocked(
     }
     metrics_path = save_json(run_root / "run_metrics.json", run_metrics)
     print(f"Run metrics saved:   {metrics_path}")
+    _emit_run_event(
+        event_type="run_metrics_saved",
+        status="completed",
+        details={
+            "warning_count": len(run_warnings),
+            "duration_seconds": float(run_metrics["duration_seconds"]),
+            "run_metrics_path": str(metrics_path),
+        },
+    )
 
     if manifest:
         output_files = dict(manifest.get("output_files", {}))
@@ -1403,9 +1753,29 @@ def _cmd_run_unlocked(
             },
         )
         print(f"  Warnings saved to:  {warnings_path}")
+        _emit_run_event(
+            event_type="run_warnings_saved",
+            status="warning",
+            details={
+                "warning_count": len(run_warnings),
+                "warnings_path": str(warnings_path),
+            },
+        )
         if fail_on_warning:
             print("Strict failure mode active: exiting non-zero due to warnings.")
+            _emit_run_event(
+                event_type="run_finished",
+                status="failed",
+                message="Run exited non-zero due to strict warning policy.",
+                details={"warning_count": len(run_warnings)},
+            )
             sys.exit(2)
+    _emit_run_event(
+        event_type="run_finished",
+        status="completed_with_warnings" if run_warnings else "completed",
+        message="Run completed.",
+        details={"warning_count": len(run_warnings)},
+    )
 
 
 def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
@@ -1477,6 +1847,8 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = Settings.from_yaml(args.config)
+    if args.command == "run" and args.hierarchy_levels is not None:
+        settings.hierarchy_levels = max(2, min(20, int(args.hierarchy_levels)))
 
     if args.command == "info":
         cmd_info(settings)

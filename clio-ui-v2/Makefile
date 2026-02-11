@@ -12,7 +12,7 @@ lint:
 check: format lint
 
 test:
-	bun test
+	bun test --pass-with-no-tests
 
 clean:
 	rm -rf .next node_modules out build dist

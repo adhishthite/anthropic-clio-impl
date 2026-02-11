@@ -124,9 +124,7 @@ def _fingerprint_differences(
     for key in sorted(set(existing.keys()) | set(current.keys())):
         if existing.get(key) == current.get(key):
             continue
-        changed.append(
-            f"{key}: existing={existing.get(key)!r}, current={current.get(key)!r}"
-        )
+        changed.append(f"{key}: existing={existing.get(key)!r}, current={current.get(key)!r}")
     return changed
 
 
@@ -2089,8 +2087,9 @@ def run_phase5_privacy_audit(
             for cluster in labeled_clusters
         ]
 
-        async def _run_async_privacy_audits(
-        ) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict]]:
+        async def _run_async_privacy_audits() -> tuple[
+            dict[str, dict], dict[str, dict], dict[str, dict]
+        ]:
             """Run batched privacy audits with adaptive concurrency and checkpoints."""
 
             async def _audit_stage_items(
@@ -2112,9 +2111,7 @@ def run_phase5_privacy_audit(
                     _emit(len(records_by_id), len(items), progress_label, offset)
 
                 remaining_items = [
-                    (item_id, content)
-                    for item_id, content in items
-                    if item_id not in records_by_id
+                    (item_id, content) for item_id, content in items if item_id not in records_by_id
                 ]
                 if not remaining_items:
                     return records_by_id
@@ -2352,9 +2349,7 @@ def run_phase5_privacy_audit(
                     else None
                 ),
             )
-            cluster_records_by_id = {
-                str(int(item["cluster_id"])): item for item in cluster_records
-            }
+            cluster_records_by_id = {str(int(item["cluster_id"])): item for item in cluster_records}
             save_jsonl(cluster_partial_path, cluster_records)
             _save_privacy_checkpoint(
                 completed=False,

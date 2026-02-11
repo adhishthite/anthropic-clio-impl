@@ -46,6 +46,7 @@ class TestFacetExtraction:
                 "summary": "The user requested debugging help for a dataframe merge.",
                 "task": "Debug data processing logic",
                 "language": "English",
+                "language_confidence": 0.92,
                 "concerning_score": 1,
             }
         )
@@ -63,6 +64,7 @@ class TestFacetExtraction:
                 "summary": "ok",
                 "task": "ok",
                 "language": "English",
+                "language_confidence": 0.8,
                 "concerning_score": 9,
             }
         )
@@ -76,6 +78,7 @@ class TestFacetExtraction:
                 "summary": "General coding support.",
                 "task": "Assist coding workflow",
                 "language": "English",
+                "language_confidence": 0.85,
                 "concerning_score": 2,
             }
         )

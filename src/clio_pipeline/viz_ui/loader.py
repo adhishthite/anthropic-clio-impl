@@ -191,9 +191,7 @@ def load_run_artifacts(
         limit=conversation_preview_limit,
     )
     checkpoints = {
-        "phase2_facet_extraction": _read_json(
-            run_root / "facets" / "facet_checkpoint.json"
-        ),
+        "phase2_facet_extraction": _read_json(run_root / "facets" / "facet_checkpoint.json"),
         "phase4_cluster_labeling": _read_json(
             run_root / "clusters" / "cluster_label_checkpoint.json"
         ),

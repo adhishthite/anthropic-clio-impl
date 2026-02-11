@@ -36,6 +36,7 @@ class _FakeJsonClient:
             "summary": "The user requested assistance with a task.",
             "task": "Assist with a general task",
             "language": "English",
+            "language_confidence": 0.98,
             "concerning_score": 1,
         }
 
@@ -172,9 +173,7 @@ class TestRunPipeline:
         manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
         assert manifest["run_fingerprint"]["facet_max_concurrency"] != 999
 
-    def test_initialize_run_artifacts_streaming_creates_messages_only_files(
-        self, tmp_path: Path
-    ):
+    def test_initialize_run_artifacts_streaming_creates_messages_only_files(self, tmp_path: Path):
         settings = _base_settings(tmp_path)
         _, _, dataset_path = run_phase1_dataset_load(settings)
         run_id, run_root, summary = initialize_run_artifacts_streaming(
@@ -191,11 +190,11 @@ class TestRunPipeline:
         assert (run_root / "conversation.updated.jsonl").exists()
 
         conversation_lines = (
-            run_root / "conversation.jsonl"
-        ).read_text(encoding="utf-8").splitlines()
+            (run_root / "conversation.jsonl").read_text(encoding="utf-8").splitlines()
+        )
         updated_lines = (
-            run_root / "conversation.updated.jsonl"
-        ).read_text(encoding="utf-8").splitlines()
+            (run_root / "conversation.updated.jsonl").read_text(encoding="utf-8").splitlines()
+        )
         assert len(conversation_lines) == 11
         assert len(updated_lines) == 11
 

@@ -1,6 +1,8 @@
 """Tests for CLI parser options."""
 
-from clio_pipeline.cli import build_parser
+import json
+
+from clio_pipeline.cli import _EtaProgressPrinter, _RunEventLogger, build_parser
 
 
 def test_run_parser_accepts_fail_on_warning_flag():
@@ -24,6 +26,13 @@ def test_run_parser_accepts_streaming_flags():
     assert args.command == "run"
     assert args.streaming is True
     assert args.stream_chunk_size == 64
+
+
+def test_run_parser_accepts_hierarchy_levels_override():
+    args = build_parser().parse_args(["run", "--with-hierarchy", "--hierarchy-levels", "9"])
+    assert args.command == "run"
+    assert args.with_hierarchy is True
+    assert args.hierarchy_levels == 9
 
 
 def test_run_parser_accepts_input_and_validation_flags():
@@ -71,3 +80,50 @@ def test_prune_runs_parser_accepts_retention_controls():
     assert args.keep_last == 10
     assert args.max_age_days == 30
     assert args.yes is True
+
+
+def test_eta_progress_printer_triggers_event_callback():
+    captured: list[tuple[int, int, str]] = []
+    printer = _EtaProgressPrinter(
+        "phase-x",
+        min_interval_seconds=0.0,
+        event_callback=lambda done, total, detail: captured.append((done, total, detail)),
+    )
+    printer(1, 10, "first")
+    printer(1, 10, "duplicate")
+    printer(4, 10, "next")
+
+    assert captured[0] == (1, 10, "first")
+    assert captured[-1] == (4, 10, "next")
+    assert len(captured) == 2
+
+
+def test_run_event_logger_writes_structured_events(tmp_path):
+    run_events_path = tmp_path / "run_events.jsonl"
+    logger = _RunEventLogger(min_progress_interval_seconds=0.0)
+    logger.bind(run_events_path)
+
+    logger.emit(
+        event_type="phase_started",
+        phase="phase2_facet_extraction",
+        status="running",
+        message="started",
+        details={"attempt": 1},
+    )
+    logger.emit_progress(
+        phase="phase2_facet_extraction",
+        done=5,
+        total=20,
+        detail="extract_facets_batch",
+    )
+
+    lines = run_events_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    second = json.loads(lines[1])
+    assert first["event_type"] == "phase_started"
+    assert first["phase"] == "phase2_facet_extraction"
+    assert first["status"] == "running"
+    assert second["event_type"] == "phase_progress"
+    assert second["done"] == 5
+    assert second["total"] == 20

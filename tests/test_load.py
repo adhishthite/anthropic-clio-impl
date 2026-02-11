@@ -191,9 +191,7 @@ class TestValidateConversationsJsonl:
         assert len(report.errors) == 1
         assert report.dropped_error_count == 2
 
-    def test_validate_conversations_jsonl_rejects_unknown_top_level_fields(
-        self, tmp_path: Path
-    ):
+    def test_validate_conversations_jsonl_rejects_unknown_top_level_fields(self, tmp_path: Path):
         path = tmp_path / "unknown_fields.jsonl"
         row = {
             "conversation_id": "conv-001",

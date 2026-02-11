@@ -22,7 +22,7 @@ class _FacetPayload(BaseModel):
     summary: str = Field(min_length=1)
     task: str = Field(min_length=1)
     language: str = Field(min_length=1)
-    language_confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    language_confidence: float = Field(ge=0.0, le=1.0)
     concerning_score: int = Field(ge=1, le=5)
 
 
@@ -33,7 +33,7 @@ class _FacetBatchItemPayload(BaseModel):
     summary: str = Field(min_length=1)
     task: str = Field(min_length=1)
     language: str = Field(min_length=1)
-    language_confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    language_confidence: float = Field(ge=0.0, le=1.0)
     concerning_score: int = Field(ge=1, le=5)
 
 
@@ -95,8 +95,7 @@ def _build_facet_batch_user_prompt(conversations: list[Conversation]) -> str:
 
     body = "\n---\n".join(sections)
     return (
-        "Analyze each conversation transcript and return one facet per conversation_id.\n\n"
-        f"{body}"
+        f"Analyze each conversation transcript and return one facet per conversation_id.\n\n{body}"
     )
 
 

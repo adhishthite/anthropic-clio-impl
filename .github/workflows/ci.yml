@@ -29,5 +29,8 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+      - name: Generate mock dataset
+        run: uv run clio-generate-mock-data --count 40 --output data/mock/conversations_llm_200.jsonl
+
       - name: CLI smoke (phase1 only)
         run: uv run clio run --limit 5 --skip-input-validation

@@ -15,11 +15,27 @@ from clio_pipeline.io import (
     summarize_conversations,
     validate_conversations_jsonl,
 )
+from clio_pipeline.mock_data import generate_mock_conversations
+
+
+def _write_mock_dataset(path: Path, *, count: int = 220, seed: int = 7) -> Path:
+    """Write deterministic mock dataset JSONL for tests."""
+
+    rows = generate_mock_conversations(count=count, seed=seed)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 class TestLoadMockConversations:
-    def test_mock_dataset_loads_and_validates(self):
-        conversations = load_mock_conversations()
+    def test_mock_dataset_loads_and_validates(self, tmp_path: Path):
+        dataset_path = _write_mock_dataset(
+            tmp_path / "data" / "mock" / "conversations_llm_200.jsonl"
+        )
+        conversations = load_mock_conversations(dataset_path)
         assert len(conversations) >= 200
 
         conversation_ids = {conv.conversation_id for conv in conversations}
@@ -34,8 +50,11 @@ class TestLoadMockConversations:
         risk_levels = {str(conv.metadata.get("risk_level", "")).lower() for conv in conversations}
         assert {"low", "medium", "high"} <= risk_levels
 
-    def test_summary_stats_are_reasonable(self):
-        conversations = load_mock_conversations()
+    def test_summary_stats_are_reasonable(self, tmp_path: Path):
+        dataset_path = _write_mock_dataset(
+            tmp_path / "data" / "mock" / "conversations_llm_200.jsonl"
+        )
+        conversations = load_mock_conversations(dataset_path)
         summary = summarize_conversations(conversations)
 
         assert summary.conversation_count == len(conversations)

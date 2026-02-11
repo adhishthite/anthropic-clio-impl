@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from clio_pipeline.config import Settings
+from clio_pipeline.mock_data import generate_mock_conversations
 from clio_pipeline.pipeline import (
     build_run_fingerprint,
     initialize_run_artifacts,
@@ -94,6 +95,14 @@ class _FakeEmbeddingClient:
 
 
 def _base_settings(tmp_path: Path) -> Settings:
+    dataset_path = tmp_path / "data" / "mock" / "conversations_llm_200.jsonl"
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    if not dataset_path.exists():
+        rows = generate_mock_conversations(count=220, seed=7)
+        dataset_path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
     return Settings(
         openai_api_key="",
         azure_openai_api_key="",
@@ -101,7 +110,8 @@ def _base_settings(tmp_path: Path) -> Settings:
         azure_openai_base_url="",
         openai_base_url="",
         jina_api_key="",
-        data_dir=Path("data"),
+        input_conversations_path=dataset_path,
+        data_dir=tmp_path / "data",
         output_dir=tmp_path / "outputs",
         k_base_clusters=4,
         min_unique_users=1,

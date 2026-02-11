@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     azure_openai_base_url: str = ""
     openai_temperature: float = 0.0
     openai_max_concurrency: int = 8
+    openai_input_cost_per_1m_tokens: float | None = None
+    openai_output_cost_per_1m_tokens: float | None = None
     stream_chunk_size: int = 200
     client_max_retries: int = 4
     client_backoff_seconds: float = 1.0

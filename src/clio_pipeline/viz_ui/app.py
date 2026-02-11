@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import plotly.graph_objects as go
 import streamlit as st
 
+from clio_pipeline.io import validate_conversations_jsonl
+from clio_pipeline.pipeline import generate_run_id
 from clio_pipeline.viz_ui.loader import discover_runs, load_run_artifacts
 
 
@@ -18,6 +26,7 @@ def _parse_app_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--run-id", type=str, default=None)
     parser.add_argument("--runs-root", type=str, default="runs")
+    parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--allow-raw-messages", action="store_true")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--refresh-seconds", type=int, default=4)
@@ -96,6 +105,269 @@ def _checkpoint_progress_rows(checkpoints: dict[str, dict]) -> list[dict]:
             }
         )
     return rows
+
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+_DEFAULT_UPLOAD_RETENTION_DAYS = 14
+
+
+def _project_root() -> Path:
+    """Return repository root path."""
+
+    return Path(__file__).resolve().parents[3]
+
+
+def _uploads_root(runs_root: Path) -> Path:
+    """Return upload storage root for UI ingestion."""
+
+    path = runs_root / "_uploads"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _jobs_root(runs_root: Path) -> Path:
+    """Return background job metadata root for UI-triggered runs."""
+
+    path = runs_root / "_jobs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    """Read one JSON object from disk."""
+
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_dict(path: Path, payload: dict[str, Any]) -> None:
+    """Write one JSON object to disk."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _is_pid_running(pid: int) -> bool:
+    """Check whether one process ID appears alive."""
+
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _format_bytes(value: int) -> str:
+    """Render byte counts using human-readable units."""
+
+    size = float(max(0, value))
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _persist_uploaded_file(uploaded_file: Any, runs_root: Path) -> tuple[Path, int]:
+    """Persist uploaded JSONL file to local upload storage."""
+
+    payload = uploaded_file.getvalue()
+    payload_size = len(payload)
+    if payload_size > _MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"File too large: {_format_bytes(payload_size)} "
+            f"(limit {_format_bytes(_MAX_UPLOAD_BYTES)})."
+        )
+
+    uploads_root = _uploads_root(runs_root)
+    safe_name = Path(str(uploaded_file.name)).name.replace(" ", "_")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    target = uploads_root / f"{stamp}_{safe_name}"
+    target.write_bytes(payload)
+    return target, payload_size
+
+
+def _build_ui_run_command(
+    *,
+    args: argparse.Namespace,
+    run_id: str,
+    input_path: Path,
+    options: dict[str, Any],
+) -> list[str]:
+    """Build run command invoked from UI."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "clio_pipeline.cli",
+        "--config",
+        args.config,
+        "run",
+        "--run-id",
+        run_id,
+        "--input",
+        input_path.as_posix(),
+    ]
+    if options.get("with_facets"):
+        command.append("--with-facets")
+    if options.get("with_clustering"):
+        command.append("--with-clustering")
+    if options.get("with_labeling"):
+        command.append("--with-labeling")
+    if options.get("with_hierarchy"):
+        command.append("--with-hierarchy")
+    if options.get("with_privacy"):
+        command.append("--with-privacy")
+    if options.get("with_eval"):
+        command.append("--with-eval")
+    limit_value = options.get("limit")
+    if isinstance(limit_value, int) and limit_value > 0:
+        command.extend(["--limit", str(limit_value)])
+    eval_count = options.get("eval_count")
+    if isinstance(eval_count, int) and eval_count > 0:
+        command.extend(["--eval-count", str(eval_count)])
+    if options.get("streaming"):
+        command.append("--streaming")
+        chunk_size = max(1, int(options.get("stream_chunk_size", 32)))
+        command.extend(["--stream-chunk-size", str(chunk_size)])
+    if options.get("strict"):
+        command.append("--strict")
+    return command
+
+
+def _start_background_run(
+    *,
+    args: argparse.Namespace,
+    input_path: Path,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """Start one CLI run in the background and persist job metadata."""
+
+    runs_root = Path(args.runs_root)
+    runs_root.mkdir(parents=True, exist_ok=True)
+    run_id = generate_run_id()
+    run_root = runs_root / run_id
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    command = _build_ui_run_command(
+        args=args,
+        run_id=run_id,
+        input_path=input_path,
+        options=options,
+    )
+    log_path = run_root / "ui_run.log"
+    with log_path.open("w", encoding="utf-8") as handle:
+        process = subprocess.Popen(
+            command,
+            cwd=_project_root(),
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    payload = {
+        "run_id": run_id,
+        "run_root": run_root.as_posix(),
+        "pid": process.pid,
+        "started_at_utc": datetime.now(UTC).isoformat(),
+        "input_path": input_path.as_posix(),
+        "command": command,
+        "log_path": log_path.as_posix(),
+    }
+    _write_json_dict(_jobs_root(runs_root) / f"{run_id}.json", payload)
+    return payload
+
+
+def _collect_jobs(runs_root: Path) -> list[dict[str, Any]]:
+    """Load UI-triggered run jobs and derive status fields."""
+
+    jobs_root = _jobs_root(runs_root)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(jobs_root.glob("*.json"), reverse=True):
+        payload = _read_json_dict(path)
+        if not payload:
+            continue
+        run_id = str(payload.get("run_id", path.stem))
+        run_root = Path(str(payload.get("run_root", runs_root / run_id)))
+        pid = _safe_int(payload.get("pid"), 0)
+        running = _is_pid_running(pid)
+        locked = (run_root / ".run.lock").exists()
+        has_metrics = (run_root / "run_metrics.json").exists()
+        has_warnings = (run_root / "run_warnings.json").exists()
+        status = "running" if (running or locked) else "finished"
+        if has_metrics and has_warnings:
+            status = "finished_with_warnings"
+        elif has_metrics:
+            status = "finished_ok"
+        payload.update(
+            {
+                "run_id": run_id,
+                "pid": pid,
+                "running": running or locked,
+                "status": status,
+                "has_metrics": has_metrics,
+                "has_warnings": has_warnings,
+                "log_path": str(payload.get("log_path", (run_root / "ui_run.log").as_posix())),
+            }
+        )
+        rows.append(payload)
+    return rows
+
+
+def _terminate_job(job: dict[str, Any]) -> tuple[bool, str]:
+    """Terminate one background run process."""
+
+    pid = _safe_int(job.get("pid"), 0)
+    if pid <= 0:
+        return False, "invalid_pid"
+    if not _is_pid_running(pid):
+        return False, "process_not_running"
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError as exc:
+        return False, str(exc)
+    return True, "terminated"
+
+
+def _read_log_tail(log_path: Path, *, max_lines: int = 80) -> str:
+    """Read trailing lines from one log file."""
+
+    if not log_path.exists():
+        return ""
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def _prune_uploads(runs_root: Path, *, retention_days: int) -> dict[str, int]:
+    """Delete uploaded files older than retention threshold."""
+
+    uploads_root = _uploads_root(runs_root)
+    cutoff = datetime.now(UTC) - timedelta(days=max(0, retention_days))
+    deleted_count = 0
+    deleted_bytes = 0
+    for path in uploads_root.glob("*"):
+        if not path.is_file():
+            continue
+        modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+        if modified >= cutoff:
+            continue
+        deleted_bytes += int(path.stat().st_size)
+        path.unlink(missing_ok=True)
+        deleted_count += 1
+    return {
+        "deleted_count": deleted_count,
+        "deleted_bytes": deleted_bytes,
+    }
 
 
 def _augment_map_points(points: list[dict], clusters: list[dict]) -> list[dict]:
@@ -485,6 +757,231 @@ def _render_conversations(data: dict, *, allow_raw_messages: bool) -> None:
                 st.json(analysis)
 
 
+def _render_ingest_and_run(args: argparse.Namespace) -> None:
+    """Render UI controls for upload, validation, and run launch."""
+
+    runs_root = Path(args.runs_root)
+    runs_root.mkdir(parents=True, exist_ok=True)
+
+    st.markdown("### Input Safety")
+    st.warning(
+        "Uploaded files may contain sensitive text. Use sanitized exports when possible, "
+        "and prune old uploads regularly."
+    )
+
+    st.markdown("### Upload or Select Input")
+    uploaded = st.file_uploader(
+        "Upload conversation JSONL",
+        type=["jsonl", "txt"],
+        accept_multiple_files=False,
+        key="ingest_upload",
+    )
+    if uploaded is not None:
+        payload_size = len(uploaded.getvalue())
+        st.write(f"File size: {_format_bytes(payload_size)}")
+        if payload_size > _MAX_UPLOAD_BYTES:
+            st.error(
+                "File exceeds upload limit "
+                f"({_format_bytes(_MAX_UPLOAD_BYTES)}). Use CLI for larger files."
+            )
+        elif st.button("Save upload", key="save_upload"):
+            try:
+                saved_path, saved_size = _persist_uploaded_file(uploaded, runs_root)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["ingest_input_path"] = saved_path.as_posix()
+                st.success(
+                    f"Saved: {saved_path.as_posix()} ({_format_bytes(saved_size)})"
+                )
+
+    default_path = str(st.session_state.get("ingest_input_path", ""))
+    input_path_raw = st.text_input(
+        "Input JSONL path",
+        value=default_path,
+        help="Use an uploaded file path or any local JSONL file path.",
+        key="ingest_input_path_text",
+    ).strip()
+    if input_path_raw:
+        st.session_state["ingest_input_path"] = input_path_raw
+
+    validate_col, max_errors_col = st.columns([1, 1])
+    max_errors = max_errors_col.number_input(
+        "Validation max errors",
+        min_value=1,
+        max_value=500,
+        value=100,
+        step=1,
+        key="ingest_max_errors",
+    )
+    if validate_col.button("Validate Input", key="validate_input"):
+        path = Path(str(st.session_state.get("ingest_input_path", "")).strip()).expanduser()
+        if not path.exists():
+            st.error(f"Input file not found: {path}")
+        else:
+            try:
+                report = validate_conversations_jsonl(path, max_errors=int(max_errors))
+            except Exception as exc:
+                st.error(f"Validation failed: {exc}")
+            else:
+                st.session_state["ingest_validation_report"] = report.to_dict()
+                st.session_state["ingest_validated_path"] = path.as_posix()
+                if report.is_valid:
+                    st.success("Validation passed.")
+                else:
+                    st.error("Validation failed.")
+
+    report_dict = st.session_state.get("ingest_validation_report")
+    if isinstance(report_dict, dict):
+        st.markdown("### Validation Result")
+        st.json(report_dict)
+
+    st.markdown("### Run Options")
+    with st.form("ingest_run_form"):
+        with_facets = st.checkbox("Run facets (phase2)", value=True)
+        with_clustering = st.checkbox("Run clustering (phase3)", value=True)
+        with_labeling = st.checkbox("Run labeling (phase4)", value=True)
+        with_hierarchy = st.checkbox("Run hierarchy", value=True)
+        with_privacy = st.checkbox("Run privacy audit", value=True)
+        with_eval = st.checkbox("Run evaluation", value=True)
+
+        limit_value = st.number_input(
+            "Conversation limit (0 = no cap)",
+            min_value=0,
+            max_value=100000,
+            value=20,
+            step=1,
+        )
+        eval_count = st.number_input(
+            "Eval sample count",
+            min_value=1,
+            max_value=10000,
+            value=20,
+            step=1,
+        )
+        streaming = st.checkbox("Enable streaming mode", value=True)
+        stream_chunk_size = st.number_input(
+            "Streaming chunk size",
+            min_value=1,
+            max_value=5000,
+            value=32,
+            step=1,
+            disabled=not streaming,
+        )
+        strict_mode = st.checkbox("Strict mode (--strict)", value=False)
+        start = st.form_submit_button("Start Run")
+
+    if start:
+        raw_input = str(st.session_state.get("ingest_input_path", "")).strip()
+        path = Path(raw_input).expanduser()
+        if not raw_input:
+            st.error("Provide an input JSONL path before starting a run.")
+        elif not path.exists():
+            st.error(f"Input file not found: {path}")
+        else:
+            validated_path = str(st.session_state.get("ingest_validated_path", "")).strip()
+            report_payload = st.session_state.get("ingest_validation_report", {})
+            if (
+                validated_path == path.as_posix()
+                and isinstance(report_payload, dict)
+                and not bool(report_payload.get("is_valid", False))
+            ):
+                st.error("Selected input failed validation. Fix errors before launching.")
+                return
+            if validated_path != path.as_posix():
+                st.warning(
+                    "Input was not validated in this session for the selected path. "
+                    "Run validation first for best safety."
+                )
+            options = {
+                "with_facets": with_facets,
+                "with_clustering": with_clustering,
+                "with_labeling": with_labeling,
+                "with_hierarchy": with_hierarchy,
+                "with_privacy": with_privacy,
+                "with_eval": with_eval,
+                "limit": int(limit_value) if int(limit_value) > 0 else None,
+                "eval_count": int(eval_count),
+                "streaming": streaming,
+                "stream_chunk_size": int(stream_chunk_size),
+                "strict": strict_mode,
+            }
+            try:
+                launch = _start_background_run(
+                    args=args,
+                    input_path=path,
+                    options=options,
+                )
+            except Exception as exc:
+                st.error(f"Failed to start run: {exc}")
+            else:
+                st.success(f"Started run: {launch['run_id']}")
+                st.caption(f"Log: {launch['log_path']}")
+
+    st.markdown("### Active / Recent UI Runs")
+    jobs = _collect_jobs(runs_root)
+    if not jobs:
+        st.info("No UI-triggered runs found yet.")
+    else:
+        display_rows = [
+            {
+                "run_id": item.get("run_id"),
+                "status": item.get("status"),
+                "pid": item.get("pid"),
+                "started_at_utc": item.get("started_at_utc"),
+                "input_path": item.get("input_path"),
+                "log_path": item.get("log_path"),
+            }
+            for item in jobs
+        ]
+        st.dataframe(display_rows, width="stretch")
+
+        running_jobs = [item for item in jobs if bool(item.get("running", False))]
+        if running_jobs:
+            selected_running = st.selectbox(
+                "Terminate running job",
+                options=[item["run_id"] for item in running_jobs],
+                index=0,
+                key="terminate_run_id",
+            )
+            if st.button("Terminate selected run"):
+                target = next(item for item in running_jobs if item["run_id"] == selected_running)
+                ok, message = _terminate_job(target)
+                if ok:
+                    st.success(f"Termination signal sent for {selected_running}.")
+                else:
+                    st.warning(f"Could not terminate {selected_running}: {message}")
+
+        selected_log = st.selectbox(
+            "View log tail",
+            options=[item["run_id"] for item in jobs],
+            index=0,
+            key="log_run_id",
+        )
+        selected_job = next(item for item in jobs if item["run_id"] == selected_log)
+        log_tail = _read_log_tail(Path(str(selected_job.get("log_path", ""))))
+        if log_tail:
+            st.code(log_tail)
+        else:
+            st.caption("No log output found yet.")
+
+    st.markdown("### Upload Retention")
+    retention_days = st.number_input(
+        "Delete uploaded files older than N days",
+        min_value=0,
+        max_value=365,
+        value=_DEFAULT_UPLOAD_RETENTION_DAYS,
+        step=1,
+        key="upload_retention_days",
+    )
+    if st.button("Prune old uploads"):
+        result = _prune_uploads(runs_root, retention_days=int(retention_days))
+        st.success(
+            "Pruned uploads: "
+            f"{result['deleted_count']} files, {_format_bytes(result['deleted_bytes'])} freed."
+        )
+
+
 def main() -> None:
     """Run the Streamlit app."""
 
@@ -509,34 +1006,68 @@ def main() -> None:
         runs = discover_runs(Path(args.runs_root))
     else:
         runs = _cached_discover_runs(args.runs_root)
-    if not runs:
-        st.error(f"No run manifests found under `{args.runs_root}`.")
-        return
+    has_runs = bool(runs)
 
-    run_ids = [str(item["run_id"]) for item in runs]
-    default_run_id = args.run_id if args.run_id in run_ids else run_ids[0]
+    selected_run_id: str | None = None
+    if has_runs:
+        run_ids = [str(item["run_id"]) for item in runs]
+        default_run_id = args.run_id if args.run_id in run_ids else run_ids[0]
+        with st.sidebar:
+            st.header("Run Selection")
+            selected_run_id = st.selectbox(
+                "Run ID",
+                options=run_ids,
+                index=run_ids.index(default_run_id),
+            )
+            if st.button("Refresh data"):
+                st.cache_data.clear()
+                st.rerun()
+            st.caption(f"Runs root: {args.runs_root}")
+            st.caption(f"Raw messages enabled: {args.allow_raw_messages}")
+            st.caption(f"Live mode: {live_mode}")
+            if live_mode:
+                st.caption(f"Auto-refresh every {refresh_seconds}s")
+    else:
+        with st.sidebar:
+            st.header("Run Selection")
+            st.caption("No existing runs yet.")
+            st.caption(f"Runs root: {args.runs_root}")
+            st.caption(f"Raw messages enabled: {args.allow_raw_messages}")
+            st.caption(f"Live mode: {live_mode}")
 
+    page_names = [
+        "Ingest & Run",
+        "Overview",
+        "Cluster Map",
+        "Hierarchy",
+        "Privacy",
+        "Evaluation",
+        "Artifacts",
+        "Conversations",
+    ]
     with st.sidebar:
-        st.header("Run Selection")
-        selected_run_id = st.selectbox(
-            "Run ID",
-            options=run_ids,
-            index=run_ids.index(default_run_id),
+        selected_page = st.selectbox(
+            "Page",
+            options=page_names,
+            index=0,
         )
-        if st.button("Refresh data"):
-            st.cache_data.clear()
-            st.rerun()
-        st.caption(f"Runs root: {args.runs_root}")
-        st.caption(f"Raw messages enabled: {args.allow_raw_messages}")
-        st.caption(f"Live mode: {live_mode}")
-        if live_mode:
-            st.caption(f"Auto-refresh every {refresh_seconds}s")
+        if live_mode and selected_page == "Ingest & Run":
+            st.caption("Auto-refresh is paused on Ingest & Run.")
 
-    if live_mode:
+    should_auto_refresh = live_mode and selected_page != "Ingest & Run"
+    if should_auto_refresh:
         st.markdown(
             f"<meta http-equiv='refresh' content='{refresh_seconds}'>",
             unsafe_allow_html=True,
         )
+
+    if selected_page == "Ingest & Run":
+        _render_ingest_and_run(args)
+        return
+
+    if not has_runs or selected_run_id is None:
+        st.info("No run manifests found yet. Use the `Ingest & Run` page to start one.")
+        return
 
     selected_run = next(item for item in runs if str(item["run_id"]) == selected_run_id)
     if live_mode:
@@ -544,30 +1075,19 @@ def main() -> None:
     else:
         run_data = _cached_load_run(str(selected_run["run_root"]))
 
-    tabs = st.tabs(
-        [
-            "Overview",
-            "Cluster Map",
-            "Hierarchy",
-            "Privacy",
-            "Evaluation",
-            "Artifacts",
-            "Conversations",
-        ]
-    )
-    with tabs[0]:
+    if selected_page == "Overview":
         _render_overview(run_data)
-    with tabs[1]:
+    elif selected_page == "Cluster Map":
         _render_cluster_map(run_data)
-    with tabs[2]:
+    elif selected_page == "Hierarchy":
         _render_hierarchy(run_data)
-    with tabs[3]:
+    elif selected_page == "Privacy":
         _render_privacy(run_data)
-    with tabs[4]:
+    elif selected_page == "Evaluation":
         _render_evaluation(run_data)
-    with tabs[5]:
+    elif selected_page == "Artifacts":
         _render_artifacts(run_data)
-    with tabs[6]:
+    elif selected_page == "Conversations":
         _render_conversations(run_data, allow_raw_messages=args.allow_raw_messages)
 
 

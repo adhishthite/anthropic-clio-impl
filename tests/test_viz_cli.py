@@ -4,9 +4,10 @@ from clio_pipeline.viz_ui.cli import _build_streamlit_command, build_parser
 
 
 def test_build_parser_accepts_live_flags():
-    args = build_parser().parse_args(["--live", "--refresh-seconds", "7"])
+    args = build_parser().parse_args(["--live", "--refresh-seconds", "7", "--config", "cfg.yaml"])
     assert args.live is True
     assert args.refresh_seconds == 7
+    assert args.config == "cfg.yaml"
 
 
 def test_build_streamlit_command_passes_live_args():
@@ -29,3 +30,4 @@ def test_build_streamlit_command_passes_live_args():
     assert "--live" in command
     assert "--refresh-seconds" in command
     assert "9" in command
+    assert "--config" in command

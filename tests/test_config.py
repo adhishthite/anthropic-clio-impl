@@ -39,6 +39,8 @@ class TestSettings:
         assert settings.random_seed == 42
         assert settings.openai_model == "gpt-4.1-mini"
         assert settings.openai_temperature == 0.0
+        assert settings.openai_input_cost_per_1m_tokens is None
+        assert settings.openai_output_cost_per_1m_tokens is None
         assert settings.resolved_openai_model() == "gpt-4.1-mini"
         assert settings.resolved_openai_base_url() == ""
         assert settings.resolved_openai_api_key() == "test"

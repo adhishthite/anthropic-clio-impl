@@ -28,61 +28,76 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
    - `uv run clio --help`
 5. Validate external input JSONL against contract:
    - `uv run clio validate-input --input /path/to/conversations.jsonl --report-json /tmp/validation_report.json`
-6. Run Phase 1 mock-data load:
+6. Run doctor checks before first execution:
+   - `uv run clio doctor`
+7. Run with explicit external input (auto-validates before run):
+   - `uv run clio run --input /path/to/conversations.jsonl --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`
+8. Run Phase 1 mock-data load:
    - `uv run clio run`
-7. Run Phase 2 facet extraction (requires `OPENAI_API_KEY`):
+9. Run Phase 2 facet extraction (requires `OPENAI_API_KEY`):
    - `uv run clio run --with-facets --limit 10`
-8. Run Phase 3 embeddings + base clustering (requires `OPENAI_API_KEY` and `JINA_API_KEY`):
+10. Run Phase 3 embeddings + base clustering (requires `OPENAI_API_KEY` and `JINA_API_KEY`):
    - `uv run clio run --with-facets --with-clustering --limit 10`
-9. Run Phase 4 cluster labeling:
+11. Run Phase 4 cluster labeling:
    - `uv run clio run --with-labeling --limit 20`
-10. Run Phase 4 hierarchy scaffold:
+12. Run Phase 4 hierarchy scaffold:
 
 - `uv run clio run --with-hierarchy --limit 20`
 
-11. Run Phase 5 privacy auditing and cluster gating:
+13. Run Phase 5 privacy auditing and cluster gating:
 
 - `uv run clio run --with-privacy --limit 20`
 
-12. Run Phase 6 synthetic evaluation harness (recommended for quick checks with 20 records):
+14. Run Phase 6 synthetic evaluation harness (recommended for quick checks with 20 records):
 
 - `uv run clio run --with-eval --eval-count 20`
 
-13. Resume from an existing run ID and skip completed phases:
+15. Resume from an existing run ID and skip completed phases:
 
 - `uv run clio run --run-id <run_id> --with-privacy --with-eval --limit 20 --eval-count 20 --resume`
 
-14. Full smoke run (all major phases) with 20-conversation cap:
+16. Full smoke run (all major phases) with 20-conversation cap:
 
 - `uv run clio run --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`
 
-15. Full smoke run in streaming mode (chunked Phase 1 + Phase 2):
+17. Full smoke run in streaming mode (chunked Phase 1 + Phase 2):
 
 - `uv run clio run --streaming --stream-chunk-size 32 --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`
 
-16. Regenerate larger mock corpus (200+ records):
+18. List/inspect/prune run directories:
+
+- `uv run clio list-runs --limit 30`
+- `uv run clio inspect-run --run-id <run_id>`
+- `uv run clio prune-runs --keep-last 30` (dry-run)
+- `uv run clio prune-runs --keep-last 30 --yes` (apply)
+
+19. Regenerate larger mock corpus (200+ records):
 
 - `uv run clio-generate-mock-data --count 240 --output data/mock/conversations_llm_200.jsonl`
 
-17. Generate mock corpus with OpenAI `gpt-5-nano`:
+20. Generate mock corpus with OpenAI `gpt-5-nano`:
 
 - `uv run clio-generate-mock-data --use-llm --llm-model gpt-5-nano --count 240 --output data/mock/conversations_llm_200.jsonl`
 
-18. Validate artifacts for latest run without launching UI:
+21. Validate artifacts for latest run without launching UI:
 
 - `uv run clio-viz --check-only`
 
-19. Launch visualization UI for a run:
+22. Launch visualization UI for a run:
 
 - `uv run clio-viz --run-id <run_id>`
 
-20. Launch UI with raw message preview enabled:
+23. Launch UI with raw message preview enabled:
 
 - `uv run clio-viz --run-id <run_id> --allow-raw-messages`
 
-21. Launch UI with live auto-refresh enabled:
+24. Launch UI with live auto-refresh enabled:
 
 - `uv run clio-viz --run-id <run_id> --live --refresh-seconds 4`
+
+25. Upload + validate + start runs from UI:
+
+- Launch `clio-viz`, open the `Ingest & Run` tab, upload/select JSONL, validate, then start.
 
 ## Defaults
 
@@ -95,6 +110,9 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
 ## Notes
 
 - `clio run` executes Phase 1 (load + validate mock conversations and print dataset stats).
+- `clio run --input <path>` lets users run external datasets without editing config files.
+- `clio run` now runs input validation automatically before Phase 1 (unless explicitly skipped).
+- `clio run` prints rough preflight estimates (LLM calls/tokens/runtime/cost when pricing is configured).
 - Every run creates `runs/<nanoid>/` and stores:
   - `conversation.jsonl` (messages-only snapshot; no user/timestamp/metadata fields)
   - `conversation.updated.jsonl` (messages + analysis enrichment as stages run)
@@ -108,6 +126,8 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
 - `clio run --with-facets` executes Phase 2 and writes facets to `runs/<run_id>/facets/facets.jsonl`.
 - `clio run --streaming` enables chunked input loading and streaming facet extraction.
 - `clio run --stream-chunk-size <N>` controls chunk size used by streaming mode.
+- `clio doctor` validates local setup (keys, paths, endpoint config, optional network reachability).
+- `clio list-runs`, `clio inspect-run`, and `clio prune-runs` provide run lifecycle management.
 - Phase 2 facet extraction supports async batching with:
   - `facet_batch_size` (default `8`)
   - `facet_max_concurrency` (default `8`)
@@ -157,9 +177,13 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
   - `runs/<run_id>/viz/tree_view.json`
 - `clio-viz` provides local UI pages for overview, map, hierarchy, privacy, evaluation, and artifacts.
 - `clio-viz` overview supports live checkpoint progress, recent run events, and run-lock status.
+- `clio-viz` includes an `Ingest & Run` tab for upload, contract validation, background run launch,
+  job monitoring, and log tail viewing.
 - UI live mode can be toggled from the sidebar, or defaulted via `--live`.
 - `clio-viz --check-only` validates run availability/artifacts in non-interactive mode.
 - Input format contract for external data sources is documented in `docs/input_jsonl_contract.md`.
+- Source extraction/normalization guidance for Mongo/Elastic/Postgres is in
+  `docs/source_adapter_recipes.md`.
 - `clio validate-input` checks JSONL schema/integrity and can emit a machine-readable report JSON.
 - Input validation now reports `schema_version=1.0.0`; top-level conversation objects reject
   unknown fields outside the canonical contract.
@@ -175,4 +199,7 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
   LangSmith-wrapped when tracing is enabled.
 - Graceful failure mode: per-item model failures are captured with fallback outputs and the run continues
   instead of halting the full pipeline.
+- Troubleshooting playbook is available at `docs/troubleshooting.md`.
+- Docker packaging is included via `Dockerfile` for containerized CLI usage.
+- Basic CI is included at `.github/workflows/ci.yml` (ruff + pytest + phase1 smoke run).
 - Full execution roadmap is in `docs/clio_implementation_plan.md`.

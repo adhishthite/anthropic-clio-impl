@@ -4,6 +4,8 @@
 openai_model: "gpt-4.1-mini"
 openai_temperature: 0.0
 openai_max_concurrency: 8
+openai_input_cost_per_1m_tokens: null
+openai_output_cost_per_1m_tokens: null
 stream_chunk_size: 200
 client_max_retries: 4
 client_backoff_seconds: 1.0

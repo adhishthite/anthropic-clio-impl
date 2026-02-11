@@ -3,6 +3,7 @@ name = "ant-clio"
 version = "0.1.0"
 description = "CLIO-inspired pipeline for privacy-preserving analysis of AI conversation usage patterns"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.0",

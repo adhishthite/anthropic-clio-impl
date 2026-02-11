@@ -2,9 +2,14 @@
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import UTC, datetime
+from math import ceil
+from pathlib import Path
+
+import httpx
 
 from clio_pipeline import __version__
 from clio_pipeline.config import Settings
@@ -39,6 +44,7 @@ from clio_pipeline.pipeline import (
     run_phase5_privacy_audit,
     run_phase6_evaluation,
 )
+from clio_pipeline.runs import discover_run_summaries, inspect_run, prune_runs
 
 
 def _format_duration(seconds: float) -> str:
@@ -114,6 +120,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("info", help="Show current configuration")
+    doctor_parser = sub.add_parser(
+        "doctor",
+        help="Run environment and filesystem diagnostics before first run.",
+    )
+    doctor_parser.add_argument(
+        "--network-check",
+        action="store_true",
+        help="Perform lightweight endpoint reachability checks.",
+    )
+
     validate_parser = sub.add_parser(
         "validate-input",
         help="Validate external conversation JSONL against the canonical input contract.",
@@ -138,6 +154,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run_parser = sub.add_parser("run", help="Run the pipeline")
+    run_parser.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help=(
+            "Override dataset path for this run (auto-validated before execution). "
+            "Defaults to configured input_conversations_path."
+        ),
+    )
+    run_parser.add_argument(
+        "--input-validation-max-errors",
+        type=int,
+        default=50,
+        help="Maximum line-level validation errors retained for run pre-check output.",
+    )
+    run_parser.add_argument(
+        "--skip-input-validation",
+        action="store_true",
+        help="Skip input contract validation pre-check (not recommended).",
+    )
     run_parser.add_argument(
         "--with-facets",
         action="store_true",
@@ -213,6 +249,83 @@ def build_parser() -> argparse.ArgumentParser:
         help="Synthetic sample count for Phase 6 evaluation.",
     )
 
+    list_runs_parser = sub.add_parser(
+        "list-runs",
+        help="List available run directories under output root.",
+    )
+    list_runs_parser.add_argument(
+        "--runs-root",
+        type=str,
+        default=None,
+        help="Optional runs root path (defaults to configured output_dir).",
+    )
+    list_runs_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum run rows to print (default: 20).",
+    )
+    list_runs_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print list output as JSON.",
+    )
+
+    inspect_run_parser = sub.add_parser(
+        "inspect-run",
+        help="Inspect one run manifest and summary by run ID.",
+    )
+    inspect_run_parser.add_argument(
+        "--run-id",
+        type=str,
+        required=True,
+        help="Run identifier to inspect.",
+    )
+    inspect_run_parser.add_argument(
+        "--runs-root",
+        type=str,
+        default=None,
+        help="Optional runs root path (defaults to configured output_dir).",
+    )
+    inspect_run_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print full inspect output as JSON.",
+    )
+
+    prune_runs_parser = sub.add_parser(
+        "prune-runs",
+        help="Delete old run directories with safe dry-run defaults.",
+    )
+    prune_runs_parser.add_argument(
+        "--runs-root",
+        type=str,
+        default=None,
+        help="Optional runs root path (defaults to configured output_dir).",
+    )
+    prune_runs_parser.add_argument(
+        "--keep-last",
+        type=int,
+        default=20,
+        help="Always keep this many newest runs (default: 20).",
+    )
+    prune_runs_parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=None,
+        help="Additionally prune runs older than this many days.",
+    )
+    prune_runs_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Apply deletion. Without this flag, command is dry-run only.",
+    )
+    prune_runs_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print prune plan/result as JSON.",
+    )
+
     return parser
 
 
@@ -226,6 +339,8 @@ def cmd_info(settings: Settings) -> None:
     print(f"  Key source:       {settings.resolved_openai_key_source()}")
     print(f"  OpenAI temp:      {settings.openai_temperature}")
     print(f"  OpenAI concurrency: {settings.openai_max_concurrency}")
+    print(f"  OpenAI input $/1M: {settings.openai_input_cost_per_1m_tokens}")
+    print(f"  OpenAI output $/1M: {settings.openai_output_cost_per_1m_tokens}")
     print(f"  Stream chunk size: {settings.stream_chunk_size}")
     print(f"  Client retries:   {settings.client_max_retries}")
     print(f"  Backoff seconds:  {settings.client_backoff_seconds}")
@@ -258,6 +373,358 @@ def cmd_info(settings: Settings) -> None:
     print(f"  Output dir:       {settings.output_dir}")
 
 
+def _resolve_dataset_path(settings: Settings, args: argparse.Namespace) -> Path:
+    """Resolve effective dataset path for this invocation."""
+
+    if args.input:
+        return Path(args.input).expanduser()
+    return settings.input_conversations_path
+
+
+def _render_validation_failure(report: object, *, max_errors: int) -> None:
+    """Print human-readable input validation failure details."""
+
+    print("Input validation failed: fix contract issues before running.")
+    print(f"  Input path:          {report.input_path}")
+    print(f"  Valid conversations: {report.valid_conversation_count}")
+    print(f"  Invalid lines:       {report.invalid_line_count}")
+    print(f"  Duplicate IDs:       {report.duplicate_conversation_id_count}")
+    if report.errors:
+        print("  Sample errors:")
+        for item in report.errors[:5]:
+            print(f"    - line {item.line_number} [{item.code}] {item.message}")
+        if report.dropped_error_count > 0:
+            print(
+                "    - "
+                f"... {report.dropped_error_count} additional errors omitted "
+                f"(max-errors={max_errors})."
+            )
+
+
+def _estimate_run_preflight(
+    *,
+    settings: Settings,
+    conversation_count: int,
+    avg_turn_count: float,
+    run_facets: bool,
+    run_clustering: bool,
+    run_labeling: bool,
+    run_hierarchy: bool,
+    run_privacy: bool,
+    run_eval: bool,
+    eval_count: int,
+) -> dict[str, float | int | None]:
+    """Build a rough run-level preflight estimate for cost and runtime."""
+
+    cluster_estimate = max(1, min(settings.k_base_clusters, max(1, conversation_count)))
+    facet_requests = conversation_count if run_facets else 0
+    clustering_requests = 1 if run_clustering else 0
+    cluster_label_requests = cluster_estimate if run_labeling else 0
+    hierarchy_label_requests = (
+        max(1, ceil(cluster_estimate / max(1, settings.hierarchy_target_group_size)))
+        if run_hierarchy
+        else 0
+    )
+    privacy_requests = 0
+    if run_privacy:
+        raw_audit = min(settings.privacy_audit_raw_sample_size, conversation_count)
+        validation_cases = (
+            max(0, min(20, conversation_count))
+            if settings.privacy_validation_enabled
+            else 0
+        )
+        privacy_requests = raw_audit + conversation_count + cluster_estimate + validation_cases
+    eval_requests = 3 if run_eval else 0
+
+    total_llm_requests = (
+        facet_requests
+        + cluster_label_requests
+        + hierarchy_label_requests
+        + privacy_requests
+        + eval_requests
+    )
+    avg_tokens_per_conversation = max(120, int(avg_turn_count * 90))
+    prompt_tokens = (
+        facet_requests * avg_tokens_per_conversation
+        + cluster_label_requests * 700
+        + hierarchy_label_requests * 900
+        + privacy_requests * 500
+        + eval_requests * 1200
+    )
+    completion_tokens = int(prompt_tokens * 0.35)
+    total_tokens = prompt_tokens + completion_tokens
+
+    input_cost_per_1m = settings.openai_input_cost_per_1m_tokens
+    output_cost_per_1m = settings.openai_output_cost_per_1m_tokens
+    estimated_cost_usd: float | None = None
+    if input_cost_per_1m is not None and output_cost_per_1m is not None:
+        estimated_cost_usd = (
+            (prompt_tokens / 1_000_000) * input_cost_per_1m
+            + (completion_tokens / 1_000_000) * output_cost_per_1m
+        )
+
+    estimated_seconds = (
+        (facet_requests / max(1, settings.facet_max_concurrency)) * 2.0
+        + clustering_requests * 4.0
+        + (cluster_label_requests / max(1, settings.cluster_label_max_concurrency)) * 2.0
+        + (hierarchy_label_requests / max(1, settings.hierarchy_label_max_concurrency)) * 2.5
+        + (privacy_requests / max(1, settings.privacy_max_concurrency)) * 1.8
+        + eval_requests * 1.5
+    )
+
+    return {
+        "cluster_estimate": cluster_estimate,
+        "facet_requests": facet_requests,
+        "clustering_requests": clustering_requests,
+        "cluster_label_requests": cluster_label_requests,
+        "hierarchy_label_requests": hierarchy_label_requests,
+        "privacy_requests": privacy_requests,
+        "eval_requests": eval_requests,
+        "total_llm_requests": total_llm_requests,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost_usd": estimated_cost_usd,
+        "estimated_seconds": estimated_seconds,
+    }
+
+
+def _resolve_runs_root(settings: Settings, runs_root_arg: str | None) -> Path:
+    """Resolve runs root from optional CLI argument."""
+
+    if runs_root_arg:
+        return Path(runs_root_arg).expanduser()
+    return settings.output_dir
+
+
+def _print_json(payload: dict | list[dict]) -> None:
+    """Pretty-print JSON payload."""
+
+    print(json.dumps(payload, indent=2, ensure_ascii=True))
+
+
+def _check_write_access(directory: Path) -> tuple[bool, str]:
+    """Verify write permission for one directory via temp file probe."""
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / f".doctor_write_probe_{os.getpid()}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return False, str(exc)
+    return True, "writable"
+
+
+def _probe_endpoint(url: str, *, timeout_seconds: float = 5.0) -> tuple[bool, str]:
+    """Best-effort network reachability probe for one URL."""
+
+    try:
+        response = httpx.get(url, timeout=timeout_seconds, follow_redirects=True)
+    except httpx.HTTPError as exc:
+        return False, str(exc)
+    return True, f"http_status={response.status_code}"
+
+
+def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
+    """Run publish-readiness diagnostics for local environment."""
+
+    checks: list[dict[str, str]] = []
+
+    input_path = settings.input_conversations_path
+    checks.append(
+        {
+            "name": "input_dataset_exists",
+            "status": "pass" if input_path.exists() else "fail",
+            "detail": str(input_path),
+        }
+    )
+
+    write_ok, write_detail = _check_write_access(settings.output_dir)
+    checks.append(
+        {
+            "name": "output_dir_writable",
+            "status": "pass" if write_ok else "fail",
+            "detail": f"{settings.output_dir} ({write_detail})",
+        }
+    )
+
+    openai_model = settings.resolved_openai_model().strip()
+    checks.append(
+        {
+            "name": "openai_model_configured",
+            "status": "pass" if bool(openai_model) else "fail",
+            "detail": openai_model or "(missing)",
+        }
+    )
+
+    openai_key = settings.resolved_openai_api_key().strip()
+    checks.append(
+        {
+            "name": "openai_api_key_present",
+            "status": "pass" if bool(openai_key) else "fail",
+            "detail": settings.resolved_openai_key_source(),
+        }
+    )
+
+    jina_key = settings.jina_api_key.strip()
+    checks.append(
+        {
+            "name": "jina_api_key_present",
+            "status": "pass" if bool(jina_key) else "warn",
+            "detail": "set" if jina_key else "missing (required for embedding/clustering)",
+        }
+    )
+
+    langsmith = get_langsmith_status()
+    tracing_enabled = bool(langsmith["enabled"])
+    checks.append(
+        {
+            "name": "langsmith_config",
+            "status": (
+                "pass"
+                if (not tracing_enabled or bool(langsmith["api_key_present"]))
+                else "warn"
+            ),
+            "detail": (
+                "enabled+key_set"
+                if tracing_enabled and langsmith["api_key_present"]
+                else ("enabled_no_key" if tracing_enabled else "disabled")
+            ),
+        }
+    )
+
+    if args.network_check:
+        openai_probe_url = settings.resolved_openai_base_url() or "https://api.openai.com/v1/models"
+        openai_ok, openai_detail = _probe_endpoint(openai_probe_url)
+        checks.append(
+            {
+                "name": "openai_endpoint_reachable",
+                "status": "pass" if openai_ok else "warn",
+                "detail": f"{openai_probe_url} ({openai_detail})",
+            }
+        )
+
+        jina_ok, jina_detail = _probe_endpoint("https://api.jina.ai/v1/embeddings")
+        checks.append(
+            {
+                "name": "jina_endpoint_reachable",
+                "status": "pass" if jina_ok else "warn",
+                "detail": jina_detail,
+            }
+        )
+
+    print("clio doctor")
+    for item in checks:
+        print(f"  - {item['name']}: {item['status']} ({item['detail']})")
+
+    fail_count = sum(1 for item in checks if item["status"] == "fail")
+    warn_count = sum(1 for item in checks if item["status"] == "warn")
+    print("")
+    print(f"Doctor result: {fail_count} fail, {warn_count} warn")
+    if fail_count > 0:
+        sys.exit(1)
+
+
+def cmd_list_runs(settings: Settings, args: argparse.Namespace) -> None:
+    """List available run directories and key metadata."""
+
+    runs_root = _resolve_runs_root(settings, args.runs_root)
+    summaries = discover_run_summaries(runs_root)
+    limited = summaries[: max(0, args.limit)]
+    payload = [item.to_dict() for item in limited]
+    if args.json:
+        _print_json(payload)
+        return
+
+    print(f"Runs under: {runs_root}")
+    print(f"Showing: {len(payload)} of {len(summaries)}")
+    for item in payload:
+        print(
+            "  - "
+            f"{item['run_id']} | phase={item['phase']} | "
+            f"updated={item['updated_at_utc']} | "
+            f"processed={item['conversation_count_processed']} | "
+            f"locked={item['locked']}"
+        )
+
+
+def cmd_inspect_run(settings: Settings, args: argparse.Namespace) -> None:
+    """Inspect one run manifest plus derived summary."""
+
+    runs_root = _resolve_runs_root(settings, args.runs_root)
+    try:
+        payload = inspect_run(runs_root, args.run_id)
+    except ValueError as exc:
+        print(f"Run inspection failed: {exc}")
+        sys.exit(1)
+
+    if args.json:
+        _print_json(payload)
+        return
+
+    summary = payload["summary"]
+    manifest = payload["manifest"]
+    print("Run inspection")
+    print(f"  Run ID:               {summary['run_id']}")
+    print(f"  Run root:             {summary['run_root']}")
+    print(f"  Phase:                {summary['phase']}")
+    print(f"  Updated:              {summary['updated_at_utc']}")
+    print(f"  Completed phases:     {summary['completed_phase_count']}")
+    print(f"  Conversation input:   {summary['conversation_count_input']}")
+    print(f"  Conversation processed: {summary['conversation_count_processed']}")
+    print(f"  Cluster total:        {summary['cluster_count_total']}")
+    print(f"  Locked:               {summary['locked']}")
+    output_files = manifest.get("output_files", {})
+    if isinstance(output_files, dict) and output_files:
+        print("  Output artifacts:")
+        for key, value in sorted(output_files.items()):
+            print(f"    - {key}: {value}")
+
+
+def cmd_prune_runs(settings: Settings, args: argparse.Namespace) -> None:
+    """Prune old runs, with dry-run default safety."""
+
+    runs_root = _resolve_runs_root(settings, args.runs_root)
+    dry_run = not bool(args.yes)
+    try:
+        result = prune_runs(
+            runs_root,
+            keep_last=args.keep_last,
+            max_age_days=args.max_age_days,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        print(f"Run pruning configuration error: {exc}")
+        sys.exit(1)
+
+    if args.json:
+        _print_json(result)
+        if result["error_count"] > 0:
+            sys.exit(1)
+        return
+
+    mode = "dry-run" if dry_run else "applied"
+    print(f"Run prune ({mode})")
+    print(f"  Runs root:            {result['runs_root']}")
+    print(f"  Total runs:           {result['total_runs']}")
+    print(f"  keep_last:            {result['keep_last']}")
+    print(f"  max_age_days:         {result['max_age_days']}")
+    print(f"  Planned deletions:    {result['planned_count']}")
+    print(f"  Deleted:              {result['deleted_count']}")
+    print(f"  Skipped locked:       {result['skipped_locked_count']}")
+    print(f"  Errors:               {result['error_count']}")
+    rows = result["planned"] if dry_run else result["deleted"]
+    if rows:
+        print("  Runs:")
+        for item in rows[:20]:
+            print(f"    - {item['run_id']} ({item['run_root']})")
+    if dry_run:
+        print("  Re-run with --yes to apply deletions.")
+    if result["error_count"] > 0:
+        sys.exit(1)
+
+
 def _cmd_run_unlocked(
     settings: Settings,
     args: argparse.Namespace,
@@ -274,6 +741,8 @@ def _cmd_run_unlocked(
     run_started_at_utc = datetime.now(UTC).isoformat()
     run_started_perf = time.perf_counter()
     phase_metrics: list[dict] = []
+    dataset_path = _resolve_dataset_path(settings, args)
+    conversations = []
 
     def _record_phase_metric(
         *,
@@ -294,14 +763,43 @@ def _cmd_run_unlocked(
         phase_metrics.append(metric)
 
     phase1_started = time.perf_counter()
-    dataset_path = settings.input_conversations_path
-    conversations = []
+    if not args.skip_input_validation:
+        print("Input validation: checking contract and integrity...")
+        try:
+            validation_report = validate_conversations_jsonl(
+                dataset_path,
+                max_errors=args.input_validation_max_errors,
+            )
+        except ConversationDatasetError as exc:
+            print(f"Input validation failed: {exc}")
+            sys.exit(1)
+        except ValueError as exc:
+            print(f"Input validation configuration error: {exc}")
+            sys.exit(1)
 
-    run_fingerprint = build_run_fingerprint(
-        settings,
-        dataset_path=dataset_path,
-        limit=args.limit,
-    )
+        if not validation_report.is_valid:
+            _render_validation_failure(
+                validation_report,
+                max_errors=args.input_validation_max_errors,
+            )
+            sys.exit(1)
+
+        print("Input validation passed.")
+        print(f"  Schema version:     {validation_report.schema_version}")
+        print(f"  Valid conversations: {validation_report.valid_conversation_count}")
+        print(f"  Duplicate IDs:       {validation_report.duplicate_conversation_id_count}")
+    else:
+        print("Input validation skipped (--skip-input-validation).")
+
+    try:
+        run_fingerprint = build_run_fingerprint(
+            settings,
+            dataset_path=dataset_path,
+            limit=args.limit,
+        )
+    except OSError as exc:
+        print(f"Run initialization failed while hashing input dataset: {exc}")
+        sys.exit(1)
 
     try:
         if streaming_mode:
@@ -315,7 +813,10 @@ def _cmd_run_unlocked(
                 enforce_resume_fingerprint=resume_mode,
             )
         else:
-            conversations, summary, dataset_path = run_phase1_dataset_load(settings)
+            conversations, summary, dataset_path = run_phase1_dataset_load(
+                settings,
+                dataset_path=dataset_path,
+            )
             run_id, run_root = initialize_run_artifacts(
                 settings=settings,
                 conversations=conversations,
@@ -380,6 +881,31 @@ def _cmd_run_unlocked(
     if args.with_clustering and not args.with_facets:
         print("")
         print("Phase 3 requested: enabling Phase 2 facet extraction automatically.")
+
+    eval_count = args.eval_count if args.eval_count is not None else settings.eval_synthetic_count
+    preflight = _estimate_run_preflight(
+        settings=settings,
+        conversation_count=summary.conversation_count,
+        avg_turn_count=summary.avg_turn_count,
+        run_facets=should_run_facets,
+        run_clustering=should_run_clustering,
+        run_labeling=should_run_labeling,
+        run_hierarchy=should_run_hierarchy,
+        run_privacy=should_run_privacy,
+        run_eval=should_run_eval,
+        eval_count=eval_count,
+    )
+    print("")
+    print("Preflight estimate (rough):")
+    print(f"  Estimated clusters:  {preflight['cluster_estimate']}")
+    print(f"  Estimated LLM calls: {preflight['total_llm_requests']}")
+    print(f"  Estimated tokens:    {preflight['total_tokens']}")
+    print(f"  Estimated runtime:   {_format_duration(float(preflight['estimated_seconds']))}")
+    estimated_cost_usd = preflight["estimated_cost_usd"]
+    if isinstance(estimated_cost_usd, float):
+        print(f"  Estimated cost:      ${estimated_cost_usd:.4f} USD")
+    else:
+        print("  Estimated cost:      n/a (set token price settings to enable)")
 
     if not should_run_facets and not should_run_eval:
         print("")
@@ -723,10 +1249,6 @@ def _cmd_run_unlocked(
                 phase6_status = "resumed"
                 phase6_mode = "resume"
         if not eval_results:
-            if args.eval_count is not None:
-                eval_count = args.eval_count
-            else:
-                eval_count = settings.eval_synthetic_count
             try:
                 print("")
                 print("Phase 6 running: synthetic evaluation in progress...")
@@ -958,10 +1480,18 @@ def main() -> None:
 
     if args.command == "info":
         cmd_info(settings)
+    elif args.command == "doctor":
+        cmd_doctor(settings, args)
     elif args.command == "validate-input":
         cmd_validate_input(settings, args)
     elif args.command == "run":
         cmd_run(settings, args)
+    elif args.command == "list-runs":
+        cmd_list_runs(settings, args)
+    elif args.command == "inspect-run":
+        cmd_inspect_run(settings, args)
+    elif args.command == "prune-runs":
+        cmd_prune_runs(settings, args)
     else:
         parser.print_help()
         sys.exit(0)

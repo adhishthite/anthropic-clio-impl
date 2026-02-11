@@ -30,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root directory containing run folders (default: runs).",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/default.yaml",
+        help="Path to CLIO config file used for UI-triggered runs.",
+    )
+    parser.add_argument(
         "--allow-raw-messages",
         action="store_true",
         help="Enable raw message preview tab in the UI.",
@@ -103,6 +109,8 @@ def _build_streamlit_command(args: argparse.Namespace) -> list[str]:
         "--",
         "--runs-root",
         args.runs_root,
+        "--config",
+        args.config,
     ]
     if args.run_id:
         command.extend(["--run-id", args.run_id])

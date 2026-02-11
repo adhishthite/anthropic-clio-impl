@@ -3,6 +3,8 @@
 
 openai_model: "gpt-4.1-mini"
 openai_temperature: 0.0
+openai_max_concurrency: 8
+stream_chunk_size: 200
 client_max_retries: 4
 client_backoff_seconds: 1.0
 embedding_provider: "jina"
@@ -10,10 +12,14 @@ embedding_model: "jina-embeddings-v3"
 
 k_base_clusters: 20
 embedding_batch_size: 32
+facet_batch_size: 8
+facet_max_concurrency: 8
 cluster_label_sample_size: 12
+cluster_label_max_concurrency: 8
 hierarchy_top_k: 10
 hierarchy_levels: 3
 hierarchy_target_group_size: 8
+hierarchy_label_max_concurrency: 8
 viz_projection_method: "umap"
 random_seed: 42
 
@@ -21,6 +27,8 @@ min_unique_users: 5
 min_conversations_per_cluster: 10
 privacy_threshold_min_rating: 3
 privacy_audit_raw_sample_size: 40
+privacy_batch_size: 12
+privacy_max_concurrency: 8
 privacy_validation_enabled: true
 
 eval_synthetic_count: 120

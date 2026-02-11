@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import random
-import time
+import threading
 from collections.abc import Sequence
 from typing import Protocol
 
 from openai import APIError, APITimeoutError, BadRequestError, OpenAI, RateLimitError
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential, wait_random
 
 from clio_pipeline.observability import maybe_wrap_openai_client
 
@@ -47,6 +47,13 @@ class OpenAIJsonClient:
         self._temperature = temperature
         self._max_retries = max_retries
         self._backoff_seconds = backoff_seconds
+        self._metrics_lock = threading.Lock()
+        self._request_count = 0
+        self._retry_count = 0
+        self._schema_fallback_count = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._total_tokens = 0
 
     def _supports_schema_fallback(self, exc: BadRequestError) -> bool:
         """Return True when the error suggests schema response format is unsupported."""
@@ -61,6 +68,15 @@ class OpenAIJsonClient:
         )
         return any(token in message for token in fallback_tokens)
 
+    def _is_retryable_openai_error(self, exc: BaseException) -> bool:
+        """Return whether an OpenAI exception should trigger retry/backoff."""
+
+        if isinstance(exc, (RateLimitError, APITimeoutError)):
+            return True
+        if isinstance(exc, BadRequestError):
+            return False
+        return isinstance(exc, APIError)
+
     def _create_completion_with_retry(
         self,
         *,
@@ -70,10 +86,24 @@ class OpenAIJsonClient:
     ):
         """Create chat completion with retry/backoff for transient errors."""
 
-        last_error: Exception | None = None
         response = None
-        for attempt in range(self._max_retries):
-            try:
+        attempt_count = 0
+        max_attempts = max(1, self._max_retries)
+        wait_strategy = wait_exponential(
+            multiplier=self._backoff_seconds,
+            min=self._backoff_seconds,
+            max=max(self._backoff_seconds, self._backoff_seconds * 8),
+        ) + wait_random(0.0, 0.25)
+        retryer = Retrying(
+            retry=retry_if_exception(self._is_retryable_openai_error),
+            wait=wait_strategy,
+            stop=stop_after_attempt(max_attempts),
+            reraise=True,
+        )
+
+        for attempt in retryer:
+            with attempt:
+                attempt_count += 1
                 response = self._client.chat.completions.create(
                     model=self._model,
                     temperature=self._temperature,
@@ -83,16 +113,20 @@ class OpenAIJsonClient:
                         {"role": "user", "content": user_prompt},
                     ],
                 )
-                break
-            except (RateLimitError, APITimeoutError, APIError) as exc:
-                last_error = exc
-                if attempt >= self._max_retries - 1:
-                    raise
-                sleep_seconds = (self._backoff_seconds * (2**attempt)) + random.uniform(0.0, 0.25)
-                time.sleep(sleep_seconds)
 
         if response is None:
-            raise ValueError(f"OpenAI response missing after retries: {last_error}")
+            raise ValueError("OpenAI response missing after retries.")
+
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+        with self._metrics_lock:
+            self._request_count += 1
+            self._retry_count += max(0, attempt_count - 1)
+            self._prompt_tokens += prompt_tokens
+            self._completion_tokens += completion_tokens
+            self._total_tokens += total_tokens
         return response
 
     def complete_json(
@@ -127,6 +161,8 @@ class OpenAIJsonClient:
             except BadRequestError as exc:
                 if not self._supports_schema_fallback(exc):
                     raise
+                with self._metrics_lock:
+                    self._schema_fallback_count += 1
                 response = self._create_completion_with_retry(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -152,3 +188,17 @@ class OpenAIJsonClient:
             raise ValueError(f"Expected JSON object, got {type(payload).__name__}.")
 
         return payload
+
+    def metrics_snapshot(self) -> dict:
+        """Return cumulative request/usage metrics for this client instance."""
+
+        with self._metrics_lock:
+            return {
+                "request_count": self._request_count,
+                "retry_count": self._retry_count,
+                "schema_fallback_count": self._schema_fallback_count,
+                "prompt_tokens": self._prompt_tokens,
+                "completion_tokens": self._completion_tokens,
+                "total_tokens": self._total_tokens,
+                "model": self._model,
+            }

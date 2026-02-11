@@ -23,6 +23,48 @@ class _PrivacyAuditPayload(BaseModel):
     justification: str = Field(min_length=1, max_length=1000)
 
 
+class _PrivacyAuditBatchItemPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content_id: str = Field(min_length=1)
+    rating: int = Field(ge=1, le=5)
+    justification: str = Field(min_length=1, max_length=1000)
+
+
+class _PrivacyAuditBatchPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    audits: list[_PrivacyAuditBatchItemPayload]
+
+
+_PRIVACY_AUDIT_BATCH_SYSTEM_PROMPT = """You are a privacy auditor for
+aggregated AI-usage analytics outputs.
+
+Evaluate each content item on a 1-5 privacy-preservation scale:
+1 = Not privacy-preserving (identifiable individual or very small group)
+2 = Slightly privacy-preserving (identifiable specific organization/group)
+3 = Fairly privacy-preserving (could narrow to a few thousand)
+4 = Mostly privacy-preserving (general, needs substantial context to identify)
+5 = Fully privacy-preserving (general, no identifying details)
+
+Return strict JSON with exactly this shape:
+{
+  "audits": [
+    {
+      "content_id": "<copied exactly from input>",
+      "rating": <integer 1-5>,
+      "justification": "<brief rationale>"
+    }
+  ]
+}
+
+Rules:
+- Include exactly one audit item per input content_id.
+- Do not omit or invent content_ids.
+- Preserve content_id values exactly.
+"""
+
+
 _PRIVACY_VALIDATION_SET: list[dict] = [
     {
         "case_id": "pv-001",
@@ -98,6 +140,102 @@ def _audit_content(*, stage: str, content: str, llm_client: LLMJsonClient) -> di
         "fallback_used": False,
         "error": None,
     }
+
+
+def audit_content(*, stage: str, content: str, llm_client: LLMJsonClient) -> dict:
+    """Audit one text block and return normalized rating payload."""
+
+    return _audit_content(stage=stage, content=content, llm_client=llm_client)
+
+
+def _build_privacy_audit_batch_user_prompt(*, stage: str, items: list[tuple[str, str]]) -> str:
+    """Build prompt for privacy auditing a batch of text blocks."""
+
+    sections: list[str] = []
+    for index, (content_id, content) in enumerate(items, start=1):
+        sections.append(
+            f"Item {index}\n"
+            f"content_id: {content_id}\n"
+            "<content>\n"
+            f"{content}\n"
+            "</content>\n"
+        )
+
+    return (
+        "Assess privacy preservation for each content item.\n"
+        f"stage: {stage}\n\n"
+        + "\n---\n".join(sections)
+    )
+
+
+def audit_content_batch(
+    *,
+    stage: str,
+    items: list[tuple[str, str]],
+    llm_client: LLMJsonClient,
+) -> tuple[dict[str, dict], list[dict]]:
+    """Audit multiple text blocks in a single LLM call."""
+
+    if not items:
+        return {}, []
+
+    try:
+        payload = llm_client.complete_json(
+            system_prompt=_PRIVACY_AUDIT_BATCH_SYSTEM_PROMPT,
+            user_prompt=_build_privacy_audit_batch_user_prompt(stage=stage, items=items),
+            schema_name="privacy_audit_batch_payload",
+            json_schema=_PrivacyAuditBatchPayload.model_json_schema(),
+            strict_schema=True,
+        )
+        parsed = _PrivacyAuditBatchPayload.model_validate(payload)
+    except Exception as exc:
+        raise PrivacyAuditError(f"Privacy batch payload failed validation: {exc}") from exc
+
+    expected_ids = {content_id for content_id, _ in items}
+    seen_ids: set[str] = set()
+    results_by_id: dict[str, dict] = {}
+    errors: list[dict] = []
+
+    for item in parsed.audits:
+        content_id = item.content_id
+        if content_id in seen_ids:
+            errors.append(
+                {
+                    "content_id": content_id,
+                    "error_type": "DuplicateContentIdInBatchOutput",
+                    "error": "Batch output repeated content_id.",
+                }
+            )
+            continue
+        if content_id not in expected_ids:
+            errors.append(
+                {
+                    "content_id": content_id,
+                    "error_type": "UnexpectedContentIdInBatchOutput",
+                    "error": "Batch output contained unknown content_id.",
+                }
+            )
+            continue
+
+        seen_ids.add(content_id)
+        results_by_id[content_id] = {
+            "rating": int(item.rating),
+            "justification": item.justification.strip(),
+            "fallback_used": False,
+            "error": None,
+        }
+
+    for content_id, _ in items:
+        if content_id not in seen_ids:
+            errors.append(
+                {
+                    "content_id": content_id,
+                    "error_type": "MissingContentIdInBatchOutput",
+                    "error": "Batch output omitted this content_id.",
+                }
+            )
+
+    return results_by_id, errors
 
 
 def run_privacy_auditor_validation(

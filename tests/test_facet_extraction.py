@@ -11,6 +11,7 @@ from clio_pipeline.pipeline import (
     extract_conversation_facets,
     extract_facets_batch,
 )
+from clio_pipeline.pipeline.facet_extraction import extract_facets_for_conversation_batch
 from clio_pipeline.schemas import Conversation, Message
 
 
@@ -22,10 +23,13 @@ class _FakeJsonClient:
         return self.payload
 
 
-def _sample_conversation() -> Conversation:
+def _sample_conversation(
+    conversation_id: str = "conv-test-1",
+    user_id: str = "user-123",
+) -> Conversation:
     return Conversation(
-        conversation_id="conv-test-1",
-        user_id="user-123",
+        conversation_id=conversation_id,
+        user_id=user_id,
         timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         messages=[
             Message(role="user", content="Help me debug a pandas merge issue."),
@@ -78,3 +82,61 @@ class TestFacetExtraction:
         conversations = [_sample_conversation(), _sample_conversation()]
         facets = extract_facets_batch(conversations, client)
         assert len(facets) == 2
+
+    def test_extract_facets_for_conversation_batch_success(self):
+        conversation_a = _sample_conversation("conv-test-a", "user-a")
+        conversation_b = _sample_conversation("conv-test-b", "user-b")
+        client = _FakeJsonClient(
+            {
+                "facets": [
+                    {
+                        "conversation_id": "conv-test-a",
+                        "summary": "Debugging support request.",
+                        "task": "Debug dataframe merge",
+                        "language": "English",
+                        "language_confidence": 0.9,
+                        "concerning_score": 1,
+                    },
+                    {
+                        "conversation_id": "conv-test-b",
+                        "summary": "Coding assistance request.",
+                        "task": "Assist with code troubleshooting",
+                        "language": "English",
+                        "language_confidence": 0.88,
+                        "concerning_score": 1,
+                    },
+                ]
+            }
+        )
+
+        facets, errors = extract_facets_for_conversation_batch(
+            [conversation_a, conversation_b],
+            client,
+        )
+        assert len(facets) == 2
+        assert not errors
+
+    def test_extract_facets_for_conversation_batch_reports_missing_ids(self):
+        conversation_a = _sample_conversation("conv-test-a", "user-a")
+        conversation_b = _sample_conversation("conv-test-b", "user-b")
+        client = _FakeJsonClient(
+            {
+                "facets": [
+                    {
+                        "conversation_id": "conv-test-a",
+                        "summary": "Debugging support request.",
+                        "task": "Debug dataframe merge",
+                        "language": "English",
+                        "language_confidence": 0.9,
+                        "concerning_score": 1,
+                    }
+                ]
+            }
+        )
+
+        facets, errors = extract_facets_for_conversation_batch(
+            [conversation_a, conversation_b],
+            client,
+        )
+        assert len(facets) == 1
+        assert any(item["error_type"] == "MissingConversationInBatchOutput" for item in errors)

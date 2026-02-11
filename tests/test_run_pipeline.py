@@ -9,7 +9,9 @@ import pytest
 
 from clio_pipeline.config import Settings
 from clio_pipeline.pipeline import (
+    build_run_fingerprint,
     initialize_run_artifacts,
+    initialize_run_artifacts_streaming,
     load_phase2_facets,
     load_phase3_cluster_summaries,
     load_phase4_hierarchy,
@@ -18,6 +20,7 @@ from clio_pipeline.pipeline import (
     load_phase6_evaluation,
     run_phase1_dataset_load,
     run_phase2_facet_extraction,
+    run_phase2_facet_extraction_streaming,
     run_phase3_base_clustering,
     run_phase4_cluster_labeling,
     run_phase4_hierarchy_scaffold,
@@ -129,6 +132,67 @@ class TestRunPipeline:
         assert (run_root / "conversation.updated.jsonl").exists()
         assert (run_root / "run_manifest.json").exists()
 
+    def test_initialize_run_artifacts_blocks_resume_fingerprint_drift(self, tmp_path: Path):
+        settings = _base_settings(tmp_path)
+        conversations, _, dataset_path = run_phase1_dataset_load(settings)
+        run_fingerprint = build_run_fingerprint(
+            settings,
+            dataset_path=dataset_path,
+            limit=5,
+        )
+        _, run_root = initialize_run_artifacts(
+            settings=settings,
+            conversations=conversations,
+            dataset_path=dataset_path,
+            run_id="run-test-fingerprint",
+            run_fingerprint=run_fingerprint,
+        )
+        drifted_fingerprint = dict(run_fingerprint)
+        drifted_fingerprint["facet_max_concurrency"] = 999
+
+        with pytest.raises(ValueError, match="fingerprint mismatch"):
+            initialize_run_artifacts(
+                settings=settings,
+                conversations=conversations,
+                dataset_path=dataset_path,
+                run_id="run-test-fingerprint",
+                run_fingerprint=drifted_fingerprint,
+                enforce_resume_fingerprint=True,
+            )
+        manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["run_fingerprint"]["facet_max_concurrency"] != 999
+
+    def test_initialize_run_artifacts_streaming_creates_messages_only_files(
+        self, tmp_path: Path
+    ):
+        settings = _base_settings(tmp_path)
+        _, _, dataset_path = run_phase1_dataset_load(settings)
+        run_id, run_root, summary = initialize_run_artifacts_streaming(
+            settings=settings,
+            dataset_path=dataset_path,
+            chunk_size=5,
+            limit=11,
+            run_id="run-test-stream-init",
+        )
+
+        assert run_id == "run-test-stream-init"
+        assert summary.conversation_count == 11
+        assert (run_root / "conversation.jsonl").exists()
+        assert (run_root / "conversation.updated.jsonl").exists()
+
+        conversation_lines = (
+            run_root / "conversation.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        updated_lines = (
+            run_root / "conversation.updated.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        assert len(conversation_lines) == 11
+        assert len(updated_lines) == 11
+
+        manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["streaming_mode"] is True
+        assert manifest["stream_chunk_size"] == 5
+
     def test_phase2_facet_extraction_saves_outputs(self, tmp_path: Path):
         settings = _base_settings(tmp_path)
         conversations, _, _ = run_phase1_dataset_load(settings)
@@ -142,10 +206,12 @@ class TestRunPipeline:
 
         assert len(facets) == 5
         facets_path = run_root / "facets" / "facets.jsonl"
+        facet_checkpoint_path = run_root / "facets" / "facet_checkpoint.json"
         manifest_path = run_root / "run_manifest.json"
         conversation_path = run_root / "conversation.jsonl"
         updated_conversation_path = run_root / "conversation.updated.jsonl"
         assert facets_path.exists()
+        assert facet_checkpoint_path.exists()
         assert manifest_path.exists()
         assert conversation_path.exists()
         assert updated_conversation_path.exists()
@@ -156,6 +222,48 @@ class TestRunPipeline:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         assert manifest["run_id"] == "run-test-phase2"
         assert manifest["conversation_count_processed"] == 5
+        assert "facet_max_concurrency" in manifest
+        assert "phase2_adaptive_concurrency_enabled" in manifest
+        assert "facet_checkpoint_json" in manifest["output_files"]
+
+    def test_phase2_facet_extraction_streaming_saves_outputs(self, tmp_path: Path):
+        settings = _base_settings(tmp_path)
+        _, _, dataset_path = run_phase1_dataset_load(settings)
+        run_id, run_root, _ = initialize_run_artifacts_streaming(
+            settings=settings,
+            dataset_path=dataset_path,
+            chunk_size=4,
+            limit=10,
+            run_id="run-test-phase2-stream",
+        )
+
+        facets, run_root = run_phase2_facet_extraction_streaming(
+            settings=settings,
+            dataset_path=dataset_path,
+            run_id=run_id,
+            stream_chunk_size=4,
+            llm_client=_FakeJsonClient(),
+            limit=10,
+            total_conversations=10,
+        )
+
+        assert len(facets) == 10
+        assert run_root.name == "run-test-phase2-stream"
+        assert (run_root / "facets" / "facets.jsonl").exists()
+        assert (run_root / "facets" / "facet_checkpoint.json").exists()
+        updated_rows = [
+            json.loads(line)
+            for line in (run_root / "conversation.updated.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(updated_rows) == 10
+        assert "analysis" in updated_rows[0]
+        assert "facets" in updated_rows[0]["analysis"]
+
+        manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["phase2_streaming_mode"] is True
+        assert manifest["stream_chunk_size"] == 4
 
     def test_phase2_requires_key_without_injected_client(self, tmp_path: Path):
         settings = _base_settings(tmp_path)
@@ -246,10 +354,15 @@ class TestRunPipeline:
         assert len(labeled_clusters) >= 1
         labels_path = run_root / "clusters" / "labeled_clusters.json"
         assert labels_path.exists()
+        assert (run_root / "clusters" / "cluster_label_checkpoint.json").exists()
+        assert (run_root / "clusters" / "labeled_clusters.partial.jsonl").exists()
 
         manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
         assert "phase4_cluster_labeling" in manifest["completed_phases"]
         assert manifest["cluster_count_total"] == len(labeled_clusters)
+        assert "cluster_label_max_concurrency" in manifest
+        assert "phase4_cluster_adaptive_concurrency_enabled" in manifest
+        assert "cluster_label_checkpoint_json" in manifest["output_files"]
 
     def test_phase4_labeling_handles_partial_failures(self, tmp_path: Path):
         settings = _base_settings(tmp_path)
@@ -319,9 +432,14 @@ class TestRunPipeline:
         hierarchy_path = run_root / "clusters" / "hierarchy.json"
         assert hierarchy_path.exists()
         assert (run_root / "viz" / "tree_view.json").exists()
+        assert (run_root / "clusters" / "hierarchy_checkpoint.json").exists()
+        assert (run_root / "clusters" / "hierarchy_label_groups.partial.jsonl").exists()
 
         manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
         assert "phase4_hierarchy_scaffold" in manifest["completed_phases"]
+        assert "hierarchy_label_max_concurrency" in manifest
+        assert "phase4_hierarchy_adaptive_concurrency_enabled" in manifest
+        assert "hierarchy_checkpoint_json" in manifest["output_files"]
 
     def test_phase5_privacy_audit_saves_outputs(self, tmp_path: Path):
         settings = _base_settings(tmp_path)
@@ -361,11 +479,15 @@ class TestRunPipeline:
         assert "cluster_summary" in summary
         assert len(gated_clusters) == len(labeled_clusters)
         assert (run_root / "privacy" / "privacy_audit.json").exists()
+        assert (run_root / "privacy" / "privacy_checkpoint.json").exists()
         assert (run_root / "clusters" / "labeled_clusters_privacy_filtered.json").exists()
         assert (run_root / "conversation.updated.jsonl").exists()
 
         manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
         assert "phase5_privacy_audit" in manifest["completed_phases"]
+        assert "privacy_max_concurrency" in manifest
+        assert "phase5_adaptive_concurrency_enabled" in manifest
+        assert "privacy_checkpoint_json" in manifest["output_files"]
 
     def test_phase6_evaluation_saves_outputs(self, tmp_path: Path):
         settings = _base_settings(tmp_path)

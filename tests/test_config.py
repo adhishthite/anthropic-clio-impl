@@ -16,13 +16,21 @@ class TestSettings:
         assert settings.k_base_clusters == 20
         assert settings.embedding_batch_size == 32
         assert settings.cluster_label_sample_size == 12
+        assert settings.cluster_label_max_concurrency == 8
         assert settings.hierarchy_top_k == 10
         assert settings.hierarchy_levels == 3
         assert settings.hierarchy_target_group_size == 8
+        assert settings.hierarchy_label_max_concurrency == 8
         assert settings.viz_projection_method == "umap"
+        assert settings.openai_max_concurrency == 8
+        assert settings.stream_chunk_size == 200
         assert settings.client_max_retries == 4
         assert settings.client_backoff_seconds == 1.0
+        assert settings.facet_batch_size == 8
+        assert settings.facet_max_concurrency == 8
         assert settings.privacy_audit_raw_sample_size == 40
+        assert settings.privacy_batch_size == 12
+        assert settings.privacy_max_concurrency == 8
         assert settings.privacy_validation_enabled is True
         assert settings.eval_synthetic_count == 120
         assert settings.eval_topic_count == 8

@@ -9,6 +9,7 @@ conversation data from any upstream store (MongoDB, Elasticsearch, Postgres, fil
 - Encoding: UTF-8
 - Each non-empty line must represent exactly one conversation record
 - `conversation_id` values must be unique across the file
+- Contract schema version: `1.0.0`
 
 ## Required Object Shape
 
@@ -16,6 +17,7 @@ Each line must match this object structure:
 
 ```json
 {
+  "schema_version": "1.0.0",
   "conversation_id": "conv_123",
   "user_id": "user_456",
   "timestamp": "2026-02-10T12:34:56Z",
@@ -37,6 +39,7 @@ Each line must match this object structure:
 ### Field Definitions
 
 - `conversation_id` (string, required): unique conversation identifier
+- `schema_version` (string, optional): input contract version tag (defaults to `1.0.0`)
 - `user_id` (string, required): stable user identifier for privacy thresholding
 - `timestamp` (ISO-8601 datetime string, required): conversation timestamp
 - `messages` (array, required): ordered message list
@@ -51,6 +54,7 @@ Each line must match this object structure:
   "type": "object",
   "properties": {
     "conversation_id": { "type": "string" },
+    "schema_version": { "type": "string" },
     "user_id": { "type": "string" },
     "timestamp": { "type": "string", "format": "date-time" },
     "messages": {
@@ -68,7 +72,7 @@ Each line must match this object structure:
     "metadata": { "type": "object" }
   },
   "required": ["conversation_id", "user_id", "timestamp", "messages"],
-  "additionalProperties": true
+  "additionalProperties": false
 }
 ```
 

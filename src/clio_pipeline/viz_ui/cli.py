@@ -40,6 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate run artifacts and print summary without launching Streamlit.",
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Launch UI with auto-refresh enabled by default.",
+    )
+    parser.add_argument(
+        "--refresh-seconds",
+        type=int,
+        default=4,
+        help="Default live refresh interval in seconds (default: 4).",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="127.0.0.1",
@@ -97,6 +108,9 @@ def _build_streamlit_command(args: argparse.Namespace) -> list[str]:
         command.extend(["--run-id", args.run_id])
     if args.allow_raw_messages:
         command.append("--allow-raw-messages")
+    if args.live:
+        command.append("--live")
+    command.extend(["--refresh-seconds", str(args.refresh_seconds)])
     return command
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,75 +40,117 @@ def _build_fallback_label(cluster: dict, exc: Exception) -> dict:
     }
 
 
+def _label_one_cluster(
+    *,
+    cluster: dict,
+    facet_by_id: dict[str, Facets],
+    llm_client: LLMJsonClient,
+    sample_size: int,
+) -> dict:
+    """Generate one labeled cluster row with fallback handling."""
+
+    conversation_ids = [str(item) for item in cluster.get("conversation_ids", [])]
+    summaries: list[str] = []
+    for conversation_id in conversation_ids:
+        facet = facet_by_id.get(conversation_id)
+        if facet is not None:
+            summaries.append(facet.summary)
+        if len(summaries) >= sample_size:
+            break
+
+    if not summaries:
+        summaries = ["No sample summary available for this cluster."]
+
+    try:
+        payload = llm_client.complete_json(
+            system_prompt=CLUSTER_LABEL_SYSTEM_PROMPT,
+            user_prompt=build_cluster_label_user_prompt(
+                cluster_id=int(cluster["cluster_id"]),
+                size=int(cluster["size"]),
+                unique_users=int(cluster["unique_users"]),
+                summaries=summaries,
+            ),
+            schema_name="cluster_label_payload",
+            json_schema=_ClusterLabelPayload.model_json_schema(),
+            strict_schema=True,
+        )
+        parsed = _ClusterLabelPayload.model_validate(payload)
+        name = parsed.name.strip()
+        description = parsed.description.strip()
+        labeling_fallback_used = False
+        labeling_error = None
+    except Exception as exc:
+        fallback = _build_fallback_label(cluster, exc)
+        name = fallback["name"]
+        description = fallback["description"]
+        labeling_fallback_used = bool(fallback["labeling_fallback_used"])
+        labeling_error = str(fallback["labeling_error"])
+
+    return {
+        "cluster_id": int(cluster["cluster_id"]),
+        "name": name,
+        "description": description,
+        "size": int(cluster["size"]),
+        "unique_users": int(cluster["unique_users"]),
+        "kept_by_threshold": bool(cluster["kept_by_threshold"]),
+        "conversation_ids": conversation_ids,
+        "labeling_fallback_used": labeling_fallback_used,
+        "labeling_error": labeling_error,
+    }
+
+
 def label_clusters(
     *,
     cluster_summaries: list[dict],
     facets: list[Facets],
     llm_client: LLMJsonClient,
     sample_size: int = 12,
+    max_concurrency: int = 1,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[dict]:
     """Generate name/description labels for each base cluster summary."""
 
     if sample_size <= 0:
         raise ClusterLabelingError(f"sample_size must be positive, got {sample_size}.")
+    if max_concurrency <= 0:
+        raise ClusterLabelingError(f"max_concurrency must be positive, got {max_concurrency}.")
 
     facet_by_id = {facet.conversation_id: facet for facet in facets}
-    labeled: list[dict] = []
-
     ordered_clusters = sorted(cluster_summaries, key=lambda item: int(item["cluster_id"]))
-    for index, cluster in enumerate(ordered_clusters, start=1):
-        conversation_ids = [str(item) for item in cluster.get("conversation_ids", [])]
-        summaries: list[str] = []
-        for conversation_id in conversation_ids:
-            facet = facet_by_id.get(conversation_id)
-            if facet is not None:
-                summaries.append(facet.summary)
-            if len(summaries) >= sample_size:
-                break
-
-        if not summaries:
-            summaries = ["No sample summary available for this cluster."]
-
-        try:
-            payload = llm_client.complete_json(
-                system_prompt=CLUSTER_LABEL_SYSTEM_PROMPT,
-                user_prompt=build_cluster_label_user_prompt(
-                    cluster_id=int(cluster["cluster_id"]),
-                    size=int(cluster["size"]),
-                    unique_users=int(cluster["unique_users"]),
-                    summaries=summaries,
-                ),
-                schema_name="cluster_label_payload",
-                json_schema=_ClusterLabelPayload.model_json_schema(),
-                strict_schema=True,
+    if max_concurrency == 1 or len(ordered_clusters) <= 1:
+        labeled: list[dict] = []
+        for index, cluster in enumerate(ordered_clusters, start=1):
+            labeled.append(
+                _label_one_cluster(
+                    cluster=cluster,
+                    facet_by_id=facet_by_id,
+                    llm_client=llm_client,
+                    sample_size=sample_size,
+                )
             )
-            parsed = _ClusterLabelPayload.model_validate(payload)
-            name = parsed.name.strip()
-            description = parsed.description.strip()
-            labeling_fallback_used = False
-            labeling_error = None
-        except Exception as exc:
-            fallback = _build_fallback_label(cluster, exc)
-            name = fallback["name"]
-            description = fallback["description"]
-            labeling_fallback_used = bool(fallback["labeling_fallback_used"])
-            labeling_error = str(fallback["labeling_error"])
+            if progress_callback is not None:
+                progress_callback(index, len(ordered_clusters))
+        return labeled
 
-        labeled.append(
-            {
-                "cluster_id": int(cluster["cluster_id"]),
-                "name": name,
-                "description": description,
-                "size": int(cluster["size"]),
-                "unique_users": int(cluster["unique_users"]),
-                "kept_by_threshold": bool(cluster["kept_by_threshold"]),
-                "conversation_ids": conversation_ids,
-                "labeling_fallback_used": labeling_fallback_used,
-                "labeling_error": labeling_error,
-            }
-        )
-        if progress_callback is not None:
-            progress_callback(index, len(ordered_clusters))
+    labeled_by_id: dict[int, dict] = {}
+    total = len(ordered_clusters)
+    done = 0
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        future_to_cluster_id = {
+            executor.submit(
+                _label_one_cluster,
+                cluster=cluster,
+                facet_by_id=facet_by_id,
+                llm_client=llm_client,
+                sample_size=sample_size,
+            ): int(cluster["cluster_id"])
+            for cluster in ordered_clusters
+        }
+        for future in as_completed(future_to_cluster_id):
+            labeled = future.result()
+            labeled_by_id[int(labeled["cluster_id"])] = labeled
+            done += 1
+            if progress_callback is not None:
+                progress_callback(done, total)
 
-    return labeled
+    return [labeled_by_id[int(cluster["cluster_id"])] for cluster in ordered_clusters]

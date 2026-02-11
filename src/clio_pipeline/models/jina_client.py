@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import random
-import time
 from typing import Protocol
 
 import httpx
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential, wait_random
 
 
 class TextEmbeddingClient(Protocol):
@@ -46,6 +45,11 @@ class JinaEmbeddingClient:
 
         self._http.close()
 
+    def _is_retryable_jina_error(self, exc: BaseException) -> bool:
+        """Return whether a Jina request exception should trigger retry/backoff."""
+
+        return isinstance(exc, (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError))
+
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts using Jina."""
 
@@ -53,8 +57,20 @@ class JinaEmbeddingClient:
             return []
 
         response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
+        max_attempts = max(1, self._max_retries)
+        wait_strategy = wait_exponential(
+            multiplier=self._backoff_seconds,
+            min=self._backoff_seconds,
+            max=max(self._backoff_seconds, self._backoff_seconds * 8),
+        ) + wait_random(0.0, 0.25)
+        retryer = Retrying(
+            retry=retry_if_exception(self._is_retryable_jina_error),
+            wait=wait_strategy,
+            stop=stop_after_attempt(max_attempts),
+            reraise=True,
+        )
+        for attempt in retryer:
+            with attempt:
                 response = self._http.post(
                     self._base_url,
                     json={
@@ -63,12 +79,6 @@ class JinaEmbeddingClient:
                     },
                 )
                 response.raise_for_status()
-                break
-            except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError):
-                if attempt >= self._max_retries - 1:
-                    raise
-                sleep_seconds = (self._backoff_seconds * (2**attempt)) + random.uniform(0.0, 0.25)
-                time.sleep(sleep_seconds)
 
         if response is None:
             raise ValueError("Jina embeddings response missing after retries.")

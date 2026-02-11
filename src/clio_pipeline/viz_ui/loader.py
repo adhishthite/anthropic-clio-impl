@@ -8,6 +8,8 @@ from typing import Any
 
 _ARTIFACT_SPECS = [
     ("run_manifest_json", "run_manifest.json", True),
+    ("run_events_jsonl", "run_events.jsonl", False),
+    ("run_metrics_json", "run_metrics.json", False),
     ("conversation_jsonl", "conversation.jsonl", True),
     ("conversation_updated_jsonl", "conversation.updated.jsonl", True),
     ("facets_jsonl", "facets/facets.jsonl", False),
@@ -170,6 +172,8 @@ def load_run_artifacts(
 
     privacy_audit = _read_json(run_root / "privacy" / "privacy_audit.json")
     eval_metrics = _read_json(run_root / "eval" / "phase6_metrics.json")
+    run_metrics = _read_json(run_root / "run_metrics.json")
+    run_events = _read_jsonl(run_root / "run_events.jsonl", limit=500)
     hierarchy = _read_json(run_root / "clusters" / "hierarchy.json")
     tree_view = _read_json(run_root / "viz" / "tree_view.json")
     map_points = _read_jsonl(run_root / "viz" / "map_points.jsonl")
@@ -186,12 +190,31 @@ def load_run_artifacts(
         run_root / "conversation.updated.jsonl",
         limit=conversation_preview_limit,
     )
+    checkpoints = {
+        "phase2_facet_extraction": _read_json(
+            run_root / "facets" / "facet_checkpoint.json"
+        ),
+        "phase4_cluster_labeling": _read_json(
+            run_root / "clusters" / "cluster_label_checkpoint.json"
+        ),
+        "phase4_hierarchy_scaffold": _read_json(
+            run_root / "clusters" / "hierarchy_checkpoint.json"
+        ),
+        "phase5_privacy_audit": _read_json(run_root / "privacy" / "privacy_checkpoint.json"),
+    }
+    run_lock_payload = _read_json(run_root / ".run.lock")
+    run_lock_active = bool(run_lock_payload)
 
     return {
         "run_root": run_root.as_posix(),
         "run_id": str(manifest.get("run_id", run_root.name)),
         "manifest": manifest,
         "artifact_status": build_artifact_status(run_root),
+        "run_metrics": run_metrics,
+        "run_events": run_events,
+        "checkpoints": checkpoints,
+        "run_lock_active": run_lock_active,
+        "run_lock_payload": run_lock_payload,
         "labeled_clusters": labeled_clusters,
         "labeled_cluster_source": labeled_source,
         "privacy_audit": privacy_audit,

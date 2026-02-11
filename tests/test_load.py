@@ -9,6 +9,7 @@ import pytest
 
 from clio_pipeline.io import (
     ConversationDatasetError,
+    iter_conversations_jsonl,
     load_conversations_jsonl,
     load_mock_conversations,
     summarize_conversations,
@@ -170,3 +171,44 @@ class TestValidateConversationsJsonl:
         assert report.error_count == 3
         assert len(report.errors) == 1
         assert report.dropped_error_count == 2
+
+    def test_validate_conversations_jsonl_rejects_unknown_top_level_fields(
+        self, tmp_path: Path
+    ):
+        path = tmp_path / "unknown_fields.jsonl"
+        row = {
+            "conversation_id": "conv-001",
+            "user_id": "user-001",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "messages": [{"role": "user", "content": "hello"}],
+            "metadata": {},
+            "unexpected_top_level_key": "not allowed",
+        }
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+        report = validate_conversations_jsonl(path)
+        assert report.is_valid is False
+        assert report.error_count == 1
+        assert report.errors[0].code == "schema_validation_failed"
+
+
+class TestIterConversationsJsonl:
+    def test_iter_conversations_jsonl_chunks_and_limit(self, tmp_path: Path):
+        path = tmp_path / "iter.jsonl"
+        rows = [
+            {
+                "conversation_id": f"conv-{idx:03d}",
+                "schema_version": "1.0.0",
+                "user_id": f"user-{idx:03d}",
+                "timestamp": "2025-01-01T00:00:00Z",
+                "messages": [{"role": "user", "content": f"hello-{idx}"}],
+                "metadata": {},
+            }
+            for idx in range(1, 8)
+        ]
+        path.write_text("\n".join(json.dumps(item) for item in rows), encoding="utf-8")
+
+        chunks = list(iter_conversations_jsonl(path, chunk_size=3, limit=5))
+        assert [len(chunk) for chunk in chunks] == [3, 2]
+        flattened_ids = [conversation.conversation_id for chunk in chunks for conversation in chunk]
+        assert flattened_ids == [f"conv-{idx:03d}" for idx in range(1, 6)]

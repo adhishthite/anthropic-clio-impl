@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -124,6 +125,60 @@ def _validate_label_payload(payload: dict, *, group_index: int) -> _HierarchyLab
         ) from exc
 
 
+def _label_hierarchy_group(
+    *,
+    group_id: int,
+    group_offset: int,
+    level: int,
+    child_clusters: list[dict],
+    child_count: int,
+    llm_client: LLMJsonClient,
+) -> dict:
+    """Generate one hierarchy group label with fallback handling."""
+
+    try:
+        payload = llm_client.complete_json(
+            system_prompt=HIERARCHY_LABEL_SYSTEM_PROMPT,
+            user_prompt=build_hierarchy_label_user_prompt(
+                group_index=group_id,
+                child_clusters=child_clusters,
+            ),
+            schema_name="hierarchy_label_payload",
+            json_schema=_HierarchyLabelPayload.model_json_schema(),
+            strict_schema=True,
+        )
+        parsed = _validate_label_payload(payload, group_index=group_id)
+        return {
+            "name": parsed.name.strip(),
+            "description": parsed.description.strip(),
+            "fallback_used": False,
+            "fallback_error": None,
+            "fallback_record": None,
+        }
+    except Exception as exc:
+        return {
+            "name": f"Group L{level}-{group_offset}",
+            "description": (
+                "Fallback hierarchy label due to model error. "
+                f"Aggregates {child_count} child nodes."
+            ),
+            "fallback_used": True,
+            "fallback_error": str(exc),
+            "fallback_record": {
+                "level": level,
+                "group_offset": group_offset,
+                "group_id": group_id,
+                "error": str(exc),
+            },
+        }
+
+
+def _hierarchy_group_key(*, level: int, group_offset: int, group_id: int) -> str:
+    """Build a stable key used for hierarchy group label checkpoints."""
+
+    return f"l{level:02d}-o{group_offset:03d}-g{group_id:03d}"
+
+
 def build_multilevel_hierarchy_scaffold(
     *,
     labeled_clusters: list[dict],
@@ -132,7 +187,11 @@ def build_multilevel_hierarchy_scaffold(
     max_levels: int,
     target_group_size: int,
     random_seed: int,
+    max_label_concurrency: int = 1,
     progress_callback: Callable[[int, int], None] | None = None,
+    adaptive_concurrency: bool = False,
+    existing_label_results: dict[str, dict] | None = None,
+    checkpoint_callback: Callable[[dict], None] | None = None,
 ) -> dict:
     """Build a multi-level hierarchy from labeled clusters."""
 
@@ -149,6 +208,10 @@ def build_multilevel_hierarchy_scaffold(
         raise HierarchyError(
             f"target_group_size must be > 1 to reduce hierarchy width, got {target_group_size}."
         )
+    if max_label_concurrency <= 0:
+        raise HierarchyError(
+            f"max_label_concurrency must be positive, got {max_label_concurrency}."
+        )
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -157,6 +220,9 @@ def build_multilevel_hierarchy_scaffold(
     label_ops_done = 0
     total_label_ops = 0
     label_fallback_records: list[dict] = []
+    label_resume_count = 0
+    current_label_concurrency = max_label_concurrency
+    cached_label_results = existing_label_results or {}
 
     simulated_nodes = len(labeled_clusters)
     for _ in range(max_levels):
@@ -199,8 +265,10 @@ def build_multilevel_hierarchy_scaffold(
 
         next_nodes: list[dict] = []
         next_embeddings_rows: list[np.ndarray] = []
+        group_entries: list[tuple[int, int, str, list[dict], list[int], list[dict]]] = []
         for group_offset, group_id in enumerate(sorted(grouped_children.keys())):
             children = grouped_children[group_id]
+            index_rows = grouped_indexes[group_id]
             child_clusters = [
                 {
                     "cluster_id": int(child["source_cluster_id"])
@@ -213,53 +281,180 @@ def build_multilevel_hierarchy_scaffold(
                 }
                 for child in children
             ]
-            try:
-                payload = llm_client.complete_json(
-                    system_prompt=HIERARCHY_LABEL_SYSTEM_PROMPT,
-                    user_prompt=build_hierarchy_label_user_prompt(
-                        group_index=group_id,
+            group_key = _hierarchy_group_key(
+                level=level,
+                group_offset=group_offset,
+                group_id=group_id,
+            )
+            group_entries.append(
+                (
+                    group_offset,
+                    group_id,
+                    group_key,
+                    children,
+                    index_rows,
+                    child_clusters,
+                )
+            )
+
+        label_results_by_group: dict[int, dict] = {}
+        remaining_group_entries: list[tuple[int, int, str, list[dict], list[int], list[dict]]] = []
+        for (
+            group_offset,
+            group_id,
+            group_key,
+            children,
+            index_rows,
+            child_clusters,
+        ) in group_entries:
+            cached_result = cached_label_results.get(group_key)
+            if (
+                isinstance(cached_result, dict)
+                and str(cached_result.get("name", "")).strip()
+                and str(cached_result.get("description", "")).strip()
+            ):
+                label_results_by_group[group_id] = {
+                    "name": str(cached_result.get("name", "")).strip(),
+                    "description": str(cached_result.get("description", "")).strip(),
+                    "fallback_used": bool(cached_result.get("fallback_used", False)),
+                    "fallback_error": cached_result.get("fallback_error"),
+                    "fallback_record": cached_result.get("fallback_record"),
+                }
+                label_resume_count += 1
+                label_ops_done += 1
+                if progress_callback is not None and total_label_ops > 0:
+                    progress_callback(label_ops_done, total_label_ops)
+                continue
+            remaining_group_entries.append(
+                (
+                    group_offset,
+                    group_id,
+                    group_key,
+                    children,
+                    index_rows,
+                    child_clusters,
+                )
+            )
+
+        level_had_issue = False
+        level_concurrency = min(
+            max(1, current_label_concurrency),
+            max(1, len(remaining_group_entries)),
+        )
+        if level_concurrency > 1 and len(remaining_group_entries) > 1:
+            with ThreadPoolExecutor(max_workers=level_concurrency) as executor:
+                future_to_group = {
+                    executor.submit(
+                        _label_hierarchy_group,
+                        group_id=group_id,
+                        group_offset=group_offset,
+                        level=level,
                         child_clusters=child_clusters,
-                    ),
-                    schema_name="hierarchy_label_payload",
-                    json_schema=_HierarchyLabelPayload.model_json_schema(),
-                    strict_schema=True,
+                        child_count=len(children),
+                        llm_client=llm_client,
+                    ): (group_offset, group_id, group_key, children)
+                    for (
+                        group_offset,
+                        group_id,
+                        group_key,
+                        children,
+                        _index_rows,
+                        child_clusters,
+                    ) in remaining_group_entries
+                }
+                for future in as_completed(future_to_group):
+                    group_offset, group_id, group_key, children = future_to_group[future]
+                    label_result = future.result()
+                    label_results_by_group[group_id] = label_result
+                    level_had_issue = level_had_issue or bool(label_result["fallback_used"])
+                    if checkpoint_callback is not None:
+                        checkpoint_callback(
+                            {
+                                "key": group_key,
+                                "level": level,
+                                "group_offset": group_offset,
+                                "group_id": group_id,
+                                "child_count": len(children),
+                                "level_concurrency": level_concurrency,
+                                "name": label_result["name"],
+                                "description": label_result["description"],
+                                "fallback_used": bool(label_result["fallback_used"]),
+                                "fallback_error": label_result["fallback_error"],
+                                "fallback_record": label_result["fallback_record"],
+                            }
+                        )
+                    label_ops_done += 1
+                    if progress_callback is not None and total_label_ops > 0:
+                        progress_callback(label_ops_done, total_label_ops)
+        else:
+            for (
+                group_offset,
+                group_id,
+                group_key,
+                children,
+                _index_rows,
+                child_clusters,
+            ) in remaining_group_entries:
+                label_result = _label_hierarchy_group(
+                    group_id=group_id,
+                    group_offset=group_offset,
+                    level=level,
+                    child_clusters=child_clusters,
+                    child_count=len(children),
+                    llm_client=llm_client,
                 )
-                parsed = _validate_label_payload(payload, group_index=group_id)
-                group_name = parsed.name.strip()
-                group_description = parsed.description.strip()
-                fallback_used = False
-                fallback_error = None
-            except Exception as exc:
-                group_name = f"Group L{level}-{group_offset}"
-                group_description = (
-                    "Fallback hierarchy label due to model error. "
-                    f"Aggregates {len(children)} child nodes."
-                )
-                fallback_used = True
-                fallback_error = str(exc)
-                label_fallback_records.append(
-                    {
-                        "level": level,
-                        "group_offset": group_offset,
-                        "group_id": group_id,
-                        "error": str(exc),
-                    }
-                )
-            label_ops_done += 1
-            if progress_callback is not None and total_label_ops > 0:
-                progress_callback(label_ops_done, total_label_ops)
+                label_results_by_group[group_id] = label_result
+                level_had_issue = level_had_issue or bool(label_result["fallback_used"])
+                if checkpoint_callback is not None:
+                    checkpoint_callback(
+                        {
+                            "key": group_key,
+                            "level": level,
+                            "group_offset": group_offset,
+                            "group_id": group_id,
+                            "child_count": len(children),
+                            "level_concurrency": level_concurrency,
+                            "name": label_result["name"],
+                            "description": label_result["description"],
+                            "fallback_used": bool(label_result["fallback_used"]),
+                            "fallback_error": label_result["fallback_error"],
+                            "fallback_record": label_result["fallback_record"],
+                        }
+                    )
+                label_ops_done += 1
+                if progress_callback is not None and total_label_ops > 0:
+                    progress_callback(label_ops_done, total_label_ops)
+
+        if adaptive_concurrency and max_label_concurrency > 1:
+            if level_had_issue and current_label_concurrency > 1:
+                current_label_concurrency -= 1
+            elif not level_had_issue and current_label_concurrency < max_label_concurrency:
+                current_label_concurrency += 1
+
+        for (
+            group_offset,
+            group_id,
+            _group_key,
+            children,
+            index_rows,
+            _child_clusters,
+        ) in group_entries:
+            label_result = label_results_by_group[group_id]
+            fallback_record = label_result.get("fallback_record")
+            if isinstance(fallback_record, dict):
+                label_fallback_records.append(fallback_record)
 
             node_id = f"lvl-{level:02d}-{group_offset:03d}"
             node = {
                 "node_id": node_id,
                 "level": level,
-                "name": group_name,
-                "description": group_description,
+                "name": label_result["name"],
+                "description": label_result["description"],
                 "size": int(sum(int(item["size"]) for item in children)),
                 "source_cluster_id": None,
                 "child_ids": [child["node_id"] for child in children],
-                "hierarchy_label_fallback_used": fallback_used,
-                "hierarchy_label_error": fallback_error,
+                "hierarchy_label_fallback_used": bool(label_result["fallback_used"]),
+                "hierarchy_label_error": label_result["fallback_error"],
             }
             nodes.append(node)
             next_nodes.append(node)
@@ -267,7 +462,6 @@ def build_multilevel_hierarchy_scaffold(
             for child in children:
                 edges.append({"parent_id": node_id, "child_id": child["node_id"]})
 
-            index_rows = grouped_indexes[group_id]
             next_embeddings_rows.append(np.mean(current_embeddings[index_rows], axis=0))
 
         current_nodes = next_nodes
@@ -332,4 +526,6 @@ def build_multilevel_hierarchy_scaffold(
         "edges": edges,
         "hierarchy_label_fallback_count": len(label_fallback_records),
         "hierarchy_label_fallback_records": label_fallback_records,
+        "hierarchy_label_resume_count": label_resume_count,
+        "hierarchy_label_final_concurrency": current_label_concurrency,
     }

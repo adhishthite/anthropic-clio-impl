@@ -2,11 +2,13 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Message(BaseModel):
     """A single message in a conversation."""
+
+    model_config = ConfigDict(extra="forbid")
 
     role: str
     content: str
@@ -15,6 +17,9 @@ class Message(BaseModel):
 class Conversation(BaseModel):
     """A raw conversation record."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str | None = None
     conversation_id: str
     user_id: str
     timestamp: datetime

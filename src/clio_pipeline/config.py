@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     azure_openai_endpoint: str = ""
     azure_openai_base_url: str = ""
     openai_temperature: float = 0.0
+    openai_max_concurrency: int = 8
+    stream_chunk_size: int = 200
     client_max_retries: int = 4
     client_backoff_seconds: float = 1.0
     embedding_provider: str = "jina"
@@ -36,10 +38,14 @@ class Settings(BaseSettings):
     # Clustering
     k_base_clusters: int = 20
     embedding_batch_size: int = 32
+    facet_batch_size: int = 8
+    facet_max_concurrency: int = 8
     cluster_label_sample_size: int = 12
+    cluster_label_max_concurrency: int = 8
     hierarchy_top_k: int = 10
     hierarchy_levels: int = 3
     hierarchy_target_group_size: int = 8
+    hierarchy_label_max_concurrency: int = 8
     viz_projection_method: str = "umap"
     random_seed: int = 42
 
@@ -48,6 +54,8 @@ class Settings(BaseSettings):
     min_conversations_per_cluster: int = 10
     privacy_threshold_min_rating: int = 3
     privacy_audit_raw_sample_size: int = 40
+    privacy_batch_size: int = 12
+    privacy_max_concurrency: int = 8
     privacy_validation_enabled: bool = True
 
     # Evaluation

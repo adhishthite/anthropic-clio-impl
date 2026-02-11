@@ -19,6 +19,8 @@ def _parse_app_args() -> argparse.Namespace:
     parser.add_argument("--run-id", type=str, default=None)
     parser.add_argument("--runs-root", type=str, default="runs")
     parser.add_argument("--allow-raw-messages", action="store_true")
+    parser.add_argument("--live", action="store_true")
+    parser.add_argument("--refresh-seconds", type=int, default=4)
     args, _ = parser.parse_known_args()
     return args
 
@@ -47,6 +49,55 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _checkpoint_progress_rows(checkpoints: dict[str, dict]) -> list[dict]:
+    """Build normalized progress rows from phase checkpoint payloads."""
+
+    rows: list[dict] = []
+    for phase, checkpoint in checkpoints.items():
+        if not isinstance(checkpoint, dict) or not checkpoint:
+            continue
+        status = "completed" if bool(checkpoint.get("completed", False)) else "running"
+
+        processed = None
+        total = None
+        if (
+            "raw_total" in checkpoint
+            and "facet_total" in checkpoint
+            and "cluster_total" in checkpoint
+        ):
+            total = (
+                _safe_int(checkpoint.get("raw_total"))
+                + _safe_int(checkpoint.get("facet_total"))
+                + _safe_int(checkpoint.get("cluster_total"))
+            )
+            processed = (
+                _safe_int(checkpoint.get("raw_processed"))
+                + _safe_int(checkpoint.get("facet_processed"))
+                + _safe_int(checkpoint.get("cluster_processed"))
+            )
+        elif "conversation_count_total" in checkpoint:
+            total = _safe_int(checkpoint.get("conversation_count_total"))
+            processed = _safe_int(checkpoint.get("conversation_count_processed"))
+        elif "cluster_total" in checkpoint:
+            total = _safe_int(checkpoint.get("cluster_total"))
+            processed = _safe_int(checkpoint.get("cluster_processed"))
+        elif "label_checkpoint_count" in checkpoint:
+            processed = _safe_int(checkpoint.get("label_checkpoint_count"))
+
+        rows.append(
+            {
+                "phase": phase,
+                "status": status,
+                "processed": processed,
+                "total": total,
+                "current_concurrency": _safe_int(checkpoint.get("current_concurrency"), 0),
+                "note": str(checkpoint.get("note", "")),
+                "updated_at_utc": str(checkpoint.get("updated_at_utc", "")),
+            }
+        )
+    return rows
+
+
 def _augment_map_points(points: list[dict], clusters: list[dict]) -> list[dict]:
     """Attach cluster labels/privacy state to map point rows."""
 
@@ -73,6 +124,7 @@ def _render_overview(data: dict) -> None:
     clusters = data["labeled_clusters"]
     privacy = data["privacy_audit"].get("summary", {})
     eval_metrics = data["eval_metrics"]
+    run_metrics = data.get("run_metrics", {})
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Run ID", str(data["run_id"]))
@@ -91,6 +143,12 @@ def _render_overview(data: dict) -> None:
         "Eval Samples",
         _safe_int(eval_metrics.get("synthetic_count")),
     )
+    if data.get("run_lock_active", False):
+        lock_payload = data.get("run_lock_payload", {})
+        st.warning(
+            "Run lock is active (processing may still be running). "
+            f"Owner pid: {lock_payload.get('pid', 'unknown')}."
+        )
 
     st.markdown("### Completed Phases")
     completed = manifest.get("completed_phases", [])
@@ -106,6 +164,25 @@ def _render_overview(data: dict) -> None:
             f"Cluster pass rate: {_safe_float(stage.get('pass_rate')):.2%} | "
             f"Threshold: {_safe_int(stage.get('threshold'))}"
         )
+
+    checkpoint_rows = _checkpoint_progress_rows(data.get("checkpoints", {}))
+    if checkpoint_rows:
+        st.markdown("### Live Progress (Checkpoints)")
+        st.dataframe(checkpoint_rows, width="stretch")
+
+    if isinstance(run_metrics, dict) and run_metrics:
+        usage = run_metrics.get("aggregate_llm_usage", {})
+        st.markdown("### Run Metrics")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Duration (s)", f"{_safe_float(run_metrics.get('duration_seconds')):.1f}")
+        m2.metric("Warnings", _safe_int(run_metrics.get("warning_count")))
+        m3.metric("LLM Requests", _safe_int(usage.get("request_count")))
+        m4.metric("LLM Tokens", _safe_int(usage.get("total_tokens")))
+
+    run_events = data.get("run_events", [])
+    if isinstance(run_events, list) and run_events:
+        st.markdown("### Recent Run Events")
+        st.dataframe(run_events[-20:], width="stretch")
 
 
 def _render_cluster_map(data: dict) -> None:
@@ -417,7 +494,21 @@ def main() -> None:
     st.title("CLIO Run Explorer")
     st.caption("Inspect one pipeline run across map, hierarchy, privacy, and evaluation outputs.")
 
-    runs = _cached_discover_runs(args.runs_root)
+    with st.sidebar:
+        st.header("Live")
+        live_mode = st.toggle("Live mode", value=bool(args.live))
+        refresh_seconds = st.slider(
+            "Refresh interval (seconds)",
+            min_value=2,
+            max_value=30,
+            value=max(2, int(args.refresh_seconds)),
+            disabled=not live_mode,
+        )
+
+    if live_mode:
+        runs = discover_runs(Path(args.runs_root))
+    else:
+        runs = _cached_discover_runs(args.runs_root)
     if not runs:
         st.error(f"No run manifests found under `{args.runs_root}`.")
         return
@@ -437,9 +528,21 @@ def main() -> None:
             st.rerun()
         st.caption(f"Runs root: {args.runs_root}")
         st.caption(f"Raw messages enabled: {args.allow_raw_messages}")
+        st.caption(f"Live mode: {live_mode}")
+        if live_mode:
+            st.caption(f"Auto-refresh every {refresh_seconds}s")
+
+    if live_mode:
+        st.markdown(
+            f"<meta http-equiv='refresh' content='{refresh_seconds}'>",
+            unsafe_allow_html=True,
+        )
 
     selected_run = next(item for item in runs if str(item["run_id"]) == selected_run_id)
-    run_data = _cached_load_run(str(selected_run["run_root"]))
+    if live_mode:
+        run_data = load_run_artifacts(Path(str(selected_run["run_root"])))
+    else:
+        run_data = _cached_load_run(str(selected_run["run_root"]))
 
     tabs = st.tabs(
         [

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from clio_pipeline.schemas import Conversation
+
+INPUT_JSONL_SCHEMA_VERSION = "1.0.0"
 
 
 class ConversationDatasetError(ValueError):
@@ -38,6 +41,7 @@ class ValidationErrorRecord:
 class InputValidationReport:
     """Validation results for a conversation JSONL file."""
 
+    schema_version: str
     input_path: str
     total_lines: int
     non_empty_lines: int
@@ -55,6 +59,7 @@ class InputValidationReport:
         """Render report as a JSON-serializable dictionary."""
 
         return {
+            "schema_version": self.schema_version,
             "input_path": self.input_path,
             "total_lines": self.total_lines,
             "non_empty_lines": self.non_empty_lines,
@@ -173,6 +178,7 @@ def validate_conversations_jsonl(
     is_valid = non_empty_lines > 0 and invalid_line_count == 0
 
     return InputValidationReport(
+        schema_version=INPUT_JSONL_SCHEMA_VERSION,
         input_path=str(file_path),
         total_lines=total_lines,
         non_empty_lines=non_empty_lines,
@@ -242,6 +248,78 @@ def load_conversations_jsonl(path: str | Path) -> list[Conversation]:
         raise ConversationDatasetError(f"No conversations found in file: {file_path}")
 
     return conversations
+
+
+def iter_conversations_jsonl(
+    path: str | Path,
+    *,
+    chunk_size: int = 200,
+    limit: int | None = None,
+) -> Iterator[list[Conversation]]:
+    """Iterate validated conversations in fixed-size chunks."""
+
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}.")
+    if limit is not None and limit <= 0:
+        raise ValueError(f"limit must be positive when provided, got {limit}.")
+
+    file_path = Path(path)
+    if not file_path.exists():
+        raise ConversationDatasetError(f"Conversation file does not exist: {file_path}")
+
+    emitted = 0
+    chunk: list[Conversation] = []
+    seen_conversation_ids: set[str] = set()
+
+    with file_path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ConversationDatasetError(
+                    f"Invalid JSON on line {line_number} of {file_path}: {exc.msg}"
+                ) from exc
+
+            if not isinstance(payload, dict):
+                raise ConversationDatasetError(
+                    f"Expected object on line {line_number} of {file_path}, "
+                    f"got {type(payload).__name__}."
+                )
+
+            try:
+                conversation = Conversation.model_validate(payload)
+            except Exception as exc:  # pragma: no cover
+                raise ConversationDatasetError(
+                    f"Conversation schema validation failed on line {line_number} of "
+                    f"{file_path}: {exc}"
+                ) from exc
+
+            if conversation.conversation_id in seen_conversation_ids:
+                raise ConversationDatasetError(
+                    f"Duplicate conversation_id '{conversation.conversation_id}' "
+                    f"found on line {line_number} of {file_path}."
+                )
+
+            seen_conversation_ids.add(conversation.conversation_id)
+            chunk.append(conversation)
+            emitted += 1
+
+            if len(chunk) >= chunk_size:
+                yield chunk
+                chunk = []
+
+            if limit is not None and emitted >= limit:
+                break
+
+    if chunk:
+        yield chunk
+
+    if emitted == 0:
+        raise ConversationDatasetError(f"No conversations found in file: {file_path}")
 
 
 def load_mock_conversations(

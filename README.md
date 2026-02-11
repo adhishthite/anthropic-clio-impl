@@ -56,25 +56,33 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
 
 - `uv run clio run --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`
 
-15. Regenerate larger mock corpus (200+ records):
+15. Full smoke run in streaming mode (chunked Phase 1 + Phase 2):
+
+- `uv run clio run --streaming --stream-chunk-size 32 --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`
+
+16. Regenerate larger mock corpus (200+ records):
 
 - `uv run clio-generate-mock-data --count 240 --output data/mock/conversations_llm_200.jsonl`
 
-16. Generate mock corpus with OpenAI `gpt-5-nano`:
+17. Generate mock corpus with OpenAI `gpt-5-nano`:
 
 - `uv run clio-generate-mock-data --use-llm --llm-model gpt-5-nano --count 240 --output data/mock/conversations_llm_200.jsonl`
 
-17. Validate artifacts for latest run without launching UI:
+18. Validate artifacts for latest run without launching UI:
 
 - `uv run clio-viz --check-only`
 
-18. Launch visualization UI for a run:
+19. Launch visualization UI for a run:
 
 - `uv run clio-viz --run-id <run_id>`
 
-19. Launch UI with raw message preview enabled:
+20. Launch UI with raw message preview enabled:
 
 - `uv run clio-viz --run-id <run_id> --allow-raw-messages`
+
+21. Launch UI with live auto-refresh enabled:
+
+- `uv run clio-viz --run-id <run_id> --live --refresh-seconds 4`
 
 ## Defaults
 
@@ -91,8 +99,42 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
   - `conversation.jsonl` (messages-only snapshot; no user/timestamp/metadata fields)
   - `conversation.updated.jsonl` (messages + analysis enrichment as stages run)
   - `run_manifest.json`
+  - `run_events.jsonl` (machine-readable phase event stream)
+  - `run_metrics.json` (machine-readable phase metrics + usage rollup)
   - `run_warnings.json` (present when recoverable phase-level warnings occur)
+  - `.run.lock` (ephemeral lock while a run is active)
+- `clio run --fail-on-warning` exits non-zero when recoverable warnings occurred.
+- `clio run --strict` implies `--fail-on-warning` for CI/automation safety.
 - `clio run --with-facets` executes Phase 2 and writes facets to `runs/<run_id>/facets/facets.jsonl`.
+- `clio run --streaming` enables chunked input loading and streaming facet extraction.
+- `clio run --stream-chunk-size <N>` controls chunk size used by streaming mode.
+- Phase 2 facet extraction supports async batching with:
+  - `facet_batch_size` (default `8`)
+  - `facet_max_concurrency` (default `8`)
+  - Adaptive wave scaling (ramps down on batch issues, ramps up on healthy waves)
+  - Mid-phase checkpoints in `runs/<run_id>/facets/`:
+    - `facets.partial.jsonl`
+    - `facets_errors.partial.jsonl`
+    - `facet_checkpoint.json`
+- Phase 4 labeling/hierarchy supports parallel label generation with:
+  - `cluster_label_max_concurrency` (default `8`)
+  - `hierarchy_label_max_concurrency` (default `8`)
+  - Adaptive concurrency for both cluster and hierarchy labeling
+  - Mid-phase checkpoints in `runs/<run_id>/clusters/`:
+    - `cluster_label_checkpoint.json`
+    - `labeled_clusters.partial.jsonl`
+    - `hierarchy_checkpoint.json`
+    - `hierarchy_label_groups.partial.jsonl`
+- Phase 5 privacy auditing supports async batching with:
+  - `privacy_batch_size` (default `12`)
+  - `privacy_max_concurrency` (default `8`)
+  - Adaptive wave scaling (same ramp-down/ramp-up behavior as Phase 2)
+  - Mid-phase checkpoints in `runs/<run_id>/privacy/`:
+    - `raw_conversation.partial.jsonl`
+    - `facet_summary.partial.jsonl`
+    - `cluster_summary.partial.jsonl`
+    - `batch_errors.partial.jsonl`
+    - `privacy_checkpoint.json`
 - `clio run --with-facets --with-clustering` executes Phase 3 and writes:
   - `runs/<run_id>/embeddings/summary_embeddings.npy`
   - `runs/<run_id>/clusters/base_assignments.jsonl`
@@ -114,13 +156,19 @@ Scaffolded project with config, core schemas, CLI entrypoints, tests, and an imp
 - Phase 4 hierarchy now also exports:
   - `runs/<run_id>/viz/tree_view.json`
 - `clio-viz` provides local UI pages for overview, map, hierarchy, privacy, evaluation, and artifacts.
+- `clio-viz` overview supports live checkpoint progress, recent run events, and run-lock status.
+- UI live mode can be toggled from the sidebar, or defaulted via `--live`.
 - `clio-viz --check-only` validates run availability/artifacts in non-interactive mode.
 - Input format contract for external data sources is documented in `docs/input_jsonl_contract.md`.
 - `clio validate-input` checks JSONL schema/integrity and can emit a machine-readable report JSON.
+- Input validation now reports `schema_version=1.0.0`; top-level conversation objects reject
+  unknown fields outside the canonical contract.
 - Core LLM phases enforce OpenAI Structured Outputs (`json_schema` + `strict=true`) and still
   run with JSON-mode fallback if an endpoint rejects schema response_format.
 - `clio-generate-mock-data --use-llm` uses OpenAI JSON generation with schema validation and template fallback.
 - API clients include retry/backoff and runs can be resumed with `--resume`.
+- Resume safety uses a manifest fingerprint (dataset hash + key config knobs) and blocks unsafe
+  `--resume` when input/model/concurrency drift is detected.
 - Azure safeguard: when an Azure endpoint is configured, the pipeline requires `AZURE_OPENAI_API_KEY`
   and will not silently fall back to `OPENAI_API_KEY`.
 - LangSmith safeguard: `.env` LangSmith keys are auto-hydrated into process env and OpenAI clients are

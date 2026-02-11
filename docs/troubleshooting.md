@@ -24,6 +24,17 @@ uv run clio doctor --network-check
   - Check contract: `docs/input_jsonl_contract.md`
   - Normalize external data first: `scripts/normalize_external_jsonl.py`
 
+### Default Mock Dataset Missing
+
+- Symptom: run or tests fail with `Conversation file does not exist: data/mock/conversations_llm_200.jsonl`.
+- Cause: `data/` is ignored in git, so fresh clones might not include generated mock files.
+- Fix:
+  - Generate dataset locally:
+    - `uv run clio-generate-mock-data --count 240 --output data/mock/conversations_llm_200.jsonl`
+  - Or run with explicit external input:
+    - `uv run clio run --input /path/to/conversations.jsonl ...`
+  - Tests in this repo synthesize temporary datasets and should not depend on checked-in `data/`.
+
 ### Azure Endpoint / Key Mismatch
 
 - Symptom: run fails with auth or model/deployment errors.

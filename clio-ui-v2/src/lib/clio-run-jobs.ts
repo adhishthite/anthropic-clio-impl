@@ -6,7 +6,7 @@ import path from "node:path";
 import { getRunsRootPath } from "@/lib/clio-runs";
 import type { RunJobRecord, RunLaunchOptions } from "@/lib/clio-types";
 
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const RUN_ID_ALPHABET =
   "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

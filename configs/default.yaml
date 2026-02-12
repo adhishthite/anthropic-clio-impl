@@ -21,7 +21,7 @@ clustering_max_leaf_clusters: 600
 clustering_hdbscan_min_cluster_size: 12
 clustering_hdbscan_min_samples: 6
 clustering_noise_policy: "nearest"
-embedding_batch_size: 32
+embedding_batch_size: 100
 facet_batch_size: 8
 facet_max_concurrency: 8
 cluster_label_sample_size: 12

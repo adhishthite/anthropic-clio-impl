@@ -65,6 +65,15 @@ const DEFAULT_OPTIONS: RunLaunchOptions = {
   streaming: false,
   streamChunkSize: 32,
   hierarchyLevels: 5,
+  hierarchyDepthPolicy: "adaptive",
+  clusterStrategy: "hybrid",
+  clusterLeafMode: "auto",
+  clusterTargetLeafSize: 25,
+  clusterMinLeafClusters: 20,
+  clusterMaxLeafClusters: 600,
+  clusterHdbscanMinClusterSize: 12,
+  clusterHdbscanMinSamples: 6,
+  clusterNoisePolicy: "nearest",
   strict: false,
   limit: null,
   evalCount: null,
@@ -318,6 +327,18 @@ export function RunOrchestrationPanel({
   const [streamChunkSizeInput, setStreamChunkSizeInput] =
     useState<string>("32");
   const [hierarchyLevelsInput, setHierarchyLevelsInput] = useState<string>("5");
+  const [clusterTargetLeafSizeInput, setClusterTargetLeafSizeInput] =
+    useState<string>("25");
+  const [clusterMinLeafClustersInput, setClusterMinLeafClustersInput] =
+    useState<string>("20");
+  const [clusterMaxLeafClustersInput, setClusterMaxLeafClustersInput] =
+    useState<string>("600");
+  const [
+    clusterHdbscanMinClusterSizeInput,
+    setClusterHdbscanMinClusterSizeInput,
+  ] = useState<string>("12");
+  const [clusterHdbscanMinSamplesInput, setClusterHdbscanMinSamplesInput] =
+    useState<string>("6");
   const [options, setOptions] = useState<RunLaunchOptions>(DEFAULT_OPTIONS);
 
   const [launching, setLaunching] = useState<boolean>(false);
@@ -520,6 +541,37 @@ export function RunOrchestrationPanel({
           min: 2,
           max: 20,
         }),
+        clusterTargetLeafSize: parseIntInRange(clusterTargetLeafSizeInput, {
+          fallback: 25,
+          min: 1,
+          max: 5000,
+        }),
+        clusterMinLeafClusters: parseIntInRange(clusterMinLeafClustersInput, {
+          fallback: 20,
+          min: 1,
+          max: 5000,
+        }),
+        clusterMaxLeafClusters: parseIntInRange(clusterMaxLeafClustersInput, {
+          fallback: 600,
+          min: 1,
+          max: 10000,
+        }),
+        clusterHdbscanMinClusterSize: parseIntInRange(
+          clusterHdbscanMinClusterSizeInput,
+          {
+            fallback: 12,
+            min: 2,
+            max: 5000,
+          },
+        ),
+        clusterHdbscanMinSamples: parseIntInRange(
+          clusterHdbscanMinSamplesInput,
+          {
+            fallback: 6,
+            min: 1,
+            max: 2000,
+          },
+        ),
       };
 
       const formData = new FormData();
@@ -559,6 +611,11 @@ export function RunOrchestrationPanel({
       setLaunching(false);
     }
   }, [
+    clusterHdbscanMinClusterSizeInput,
+    clusterHdbscanMinSamplesInput,
+    clusterMaxLeafClustersInput,
+    clusterMinLeafClustersInput,
+    clusterTargetLeafSizeInput,
     evalCountInput,
     hierarchyLevelsInput,
     limitInput,
@@ -814,6 +871,182 @@ export function RunOrchestrationPanel({
               </div>
             </div>
 
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-strategy">
+                  Cluster strategy
+                </Label>
+                <Select
+                  value={options.clusterStrategy}
+                  onValueChange={(value) =>
+                    setOptions((current) => ({
+                      ...current,
+                      clusterStrategy:
+                        value as RunLaunchOptions["clusterStrategy"],
+                    }))
+                  }
+                  disabled={!options.withClustering}
+                >
+                  <SelectTrigger id="launch-cluster-strategy">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hybrid">Hybrid (recommended)</SelectItem>
+                    <SelectItem value="hdbscan">HDBSCAN</SelectItem>
+                    <SelectItem value="kmeans">K-means</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-leaf-mode">
+                  Leaf sizing mode
+                </Label>
+                <Select
+                  value={options.clusterLeafMode}
+                  onValueChange={(value) =>
+                    setOptions((current) => ({
+                      ...current,
+                      clusterLeafMode:
+                        value as RunLaunchOptions["clusterLeafMode"],
+                    }))
+                  }
+                  disabled={!options.withClustering}
+                >
+                  <SelectTrigger id="launch-cluster-leaf-mode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto-size by dataset</SelectItem>
+                    <SelectItem value="fixed">Fixed k</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-hierarchy-depth-policy">
+                  Hierarchy depth policy
+                </Label>
+                <Select
+                  value={options.hierarchyDepthPolicy}
+                  onValueChange={(value) =>
+                    setOptions((current) => ({
+                      ...current,
+                      hierarchyDepthPolicy:
+                        value as RunLaunchOptions["hierarchyDepthPolicy"],
+                    }))
+                  }
+                  disabled={!options.withHierarchy}
+                >
+                  <SelectTrigger id="launch-hierarchy-depth-policy">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="adaptive">Adaptive</SelectItem>
+                    <SelectItem value="strict_min">
+                      Strict minimum depth
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-noise-policy">Noise policy</Label>
+                <Select
+                  value={options.clusterNoisePolicy}
+                  onValueChange={(value) =>
+                    setOptions((current) => ({
+                      ...current,
+                      clusterNoisePolicy:
+                        value as RunLaunchOptions["clusterNoisePolicy"],
+                    }))
+                  }
+                  disabled={!options.withClustering}
+                >
+                  <SelectTrigger id="launch-noise-policy">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="nearest">Nearest centroid</SelectItem>
+                    <SelectItem value="singleton">
+                      Singleton clusters
+                    </SelectItem>
+                    <SelectItem value="drop">Drop bucket</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-target-leaf-size">
+                  Target leaf size
+                </Label>
+                <Input
+                  id="launch-cluster-target-leaf-size"
+                  inputMode="numeric"
+                  value={clusterTargetLeafSizeInput}
+                  onChange={(event) =>
+                    setClusterTargetLeafSizeInput(event.target.value)
+                  }
+                  disabled={!options.withClustering}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-min-leaf-clusters">
+                  Min leaf clusters
+                </Label>
+                <Input
+                  id="launch-cluster-min-leaf-clusters"
+                  inputMode="numeric"
+                  value={clusterMinLeafClustersInput}
+                  onChange={(event) =>
+                    setClusterMinLeafClustersInput(event.target.value)
+                  }
+                  disabled={!options.withClustering}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-max-leaf-clusters">
+                  Max leaf clusters
+                </Label>
+                <Input
+                  id="launch-cluster-max-leaf-clusters"
+                  inputMode="numeric"
+                  value={clusterMaxLeafClustersInput}
+                  onChange={(event) =>
+                    setClusterMaxLeafClustersInput(event.target.value)
+                  }
+                  disabled={!options.withClustering}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-hdbscan-min-cluster-size">
+                  HDBSCAN min cluster size
+                </Label>
+                <Input
+                  id="launch-cluster-hdbscan-min-cluster-size"
+                  inputMode="numeric"
+                  value={clusterHdbscanMinClusterSizeInput}
+                  onChange={(event) =>
+                    setClusterHdbscanMinClusterSizeInput(event.target.value)
+                  }
+                  disabled={!options.withClustering}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="launch-cluster-hdbscan-min-samples">
+                  HDBSCAN min samples
+                </Label>
+                <Input
+                  id="launch-cluster-hdbscan-min-samples"
+                  inputMode="numeric"
+                  value={clusterHdbscanMinSamplesInput}
+                  onChange={(event) =>
+                    setClusterHdbscanMinSamplesInput(event.target.value)
+                  }
+                  disabled={!options.withClustering}
+                />
+              </div>
+            </div>
+
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 onClick={() => void handleLaunchRun()}
@@ -842,6 +1075,12 @@ export function RunOrchestrationPanel({
                   min: 2,
                   max: 20,
                 })}
+              </Badge>
+              <Badge variant="outline">
+                clustering {options.clusterStrategy}/{options.clusterLeafMode}
+              </Badge>
+              <Badge variant="outline">
+                hierarchy policy {options.hierarchyDepthPolicy}
               </Badge>
             </div>
           </section>

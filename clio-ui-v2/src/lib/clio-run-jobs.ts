@@ -177,6 +177,40 @@ function normalizeLaunchOptions(
     2,
     Math.min(20, Math.floor(hierarchyLevelsRaw)),
   );
+  const hierarchyDepthPolicy =
+    options.hierarchyDepthPolicy === "strict_min" ? "strict_min" : "adaptive";
+  const clusterStrategy =
+    options.clusterStrategy === "kmeans" ||
+    options.clusterStrategy === "hdbscan"
+      ? options.clusterStrategy
+      : "hybrid";
+  const clusterLeafMode =
+    options.clusterLeafMode === "fixed" ? "fixed" : "auto";
+  const clusterTargetLeafSize = Math.max(
+    1,
+    Math.floor(asNumber(options.clusterTargetLeafSize, 25)),
+  );
+  const clusterMinLeafClusters = Math.max(
+    1,
+    Math.floor(asNumber(options.clusterMinLeafClusters, 20)),
+  );
+  const clusterMaxLeafClusters = Math.max(
+    clusterMinLeafClusters,
+    Math.floor(asNumber(options.clusterMaxLeafClusters, 600)),
+  );
+  const clusterHdbscanMinClusterSize = Math.max(
+    2,
+    Math.floor(asNumber(options.clusterHdbscanMinClusterSize, 12)),
+  );
+  const clusterHdbscanMinSamples = Math.max(
+    1,
+    Math.floor(asNumber(options.clusterHdbscanMinSamples, 6)),
+  );
+  const clusterNoisePolicy =
+    options.clusterNoisePolicy === "singleton" ||
+    options.clusterNoisePolicy === "drop"
+      ? options.clusterNoisePolicy
+      : "nearest";
 
   const limitRaw = asNumber(options.limit, 0);
   const evalCountRaw = asNumber(options.evalCount, 0);
@@ -191,6 +225,15 @@ function normalizeLaunchOptions(
     streaming: Boolean(options.streaming),
     streamChunkSize,
     hierarchyLevels,
+    hierarchyDepthPolicy,
+    clusterStrategy,
+    clusterLeafMode,
+    clusterTargetLeafSize,
+    clusterMinLeafClusters,
+    clusterMaxLeafClusters,
+    clusterHdbscanMinClusterSize,
+    clusterHdbscanMinSamples,
+    clusterNoisePolicy,
     strict: Boolean(options.strict),
     limit: limitRaw > 0 ? Math.floor(limitRaw) : null,
     evalCount: evalCountRaw > 0 ? Math.floor(evalCountRaw) : null,
@@ -229,6 +272,29 @@ function buildRunCommand(params: {
   }
   if (options.withClustering) {
     runArgs.push("--with-clustering");
+    runArgs.push("--cluster-strategy", String(options.clusterStrategy));
+    runArgs.push("--cluster-leaf-mode", String(options.clusterLeafMode));
+    runArgs.push(
+      "--cluster-target-leaf-size",
+      String(options.clusterTargetLeafSize),
+    );
+    runArgs.push(
+      "--cluster-min-leaf-clusters",
+      String(options.clusterMinLeafClusters),
+    );
+    runArgs.push(
+      "--cluster-max-leaf-clusters",
+      String(options.clusterMaxLeafClusters),
+    );
+    runArgs.push(
+      "--cluster-hdbscan-min-cluster-size",
+      String(options.clusterHdbscanMinClusterSize),
+    );
+    runArgs.push(
+      "--cluster-hdbscan-min-samples",
+      String(options.clusterHdbscanMinSamples),
+    );
+    runArgs.push("--cluster-noise-policy", String(options.clusterNoisePolicy));
   }
   if (options.withLabeling) {
     runArgs.push("--with-labeling");
@@ -236,6 +302,10 @@ function buildRunCommand(params: {
   if (options.withHierarchy) {
     runArgs.push("--with-hierarchy");
     runArgs.push("--hierarchy-levels", String(options.hierarchyLevels));
+    runArgs.push(
+      "--hierarchy-depth-policy",
+      String(options.hierarchyDepthPolicy),
+    );
   }
   if (options.withPrivacy) {
     runArgs.push("--with-privacy");

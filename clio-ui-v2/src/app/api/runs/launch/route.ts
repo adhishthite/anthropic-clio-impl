@@ -17,6 +17,15 @@ const DEFAULT_OPTIONS: RunLaunchOptions = {
   streaming: false,
   streamChunkSize: 32,
   hierarchyLevels: 5,
+  hierarchyDepthPolicy: "adaptive",
+  clusterStrategy: "hybrid",
+  clusterLeafMode: "auto",
+  clusterTargetLeafSize: 25,
+  clusterMinLeafClusters: 20,
+  clusterMaxLeafClusters: 600,
+  clusterHdbscanMinClusterSize: 12,
+  clusterHdbscanMinSamples: 6,
+  clusterNoisePolicy: "nearest",
   strict: false,
   limit: null,
   evalCount: null,
@@ -78,6 +87,18 @@ function asIntInRange(
   return normalized;
 }
 
+function asOneOf<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const normalized = value.trim();
+  return allowed.includes(normalized as T) ? (normalized as T) : fallback;
+}
+
 function parseOptions(
   raw: FormDataEntryValue | null,
 ): Partial<RunLaunchOptions> {
@@ -114,6 +135,54 @@ function parseOptions(
         min: 2,
         max: 20,
       }),
+      hierarchyDepthPolicy: asOneOf(
+        parsed.hierarchyDepthPolicy,
+        ["adaptive", "strict_min"] as const,
+        DEFAULT_OPTIONS.hierarchyDepthPolicy,
+      ),
+      clusterStrategy: asOneOf(
+        parsed.clusterStrategy,
+        ["kmeans", "hdbscan", "hybrid"] as const,
+        DEFAULT_OPTIONS.clusterStrategy,
+      ),
+      clusterLeafMode: asOneOf(
+        parsed.clusterLeafMode,
+        ["fixed", "auto"] as const,
+        DEFAULT_OPTIONS.clusterLeafMode,
+      ),
+      clusterTargetLeafSize: asIntInRange(parsed.clusterTargetLeafSize, {
+        fallback: DEFAULT_OPTIONS.clusterTargetLeafSize,
+        min: 1,
+        max: 5000,
+      }),
+      clusterMinLeafClusters: asIntInRange(parsed.clusterMinLeafClusters, {
+        fallback: DEFAULT_OPTIONS.clusterMinLeafClusters,
+        min: 1,
+        max: 5000,
+      }),
+      clusterMaxLeafClusters: asIntInRange(parsed.clusterMaxLeafClusters, {
+        fallback: DEFAULT_OPTIONS.clusterMaxLeafClusters,
+        min: 1,
+        max: 10000,
+      }),
+      clusterHdbscanMinClusterSize: asIntInRange(
+        parsed.clusterHdbscanMinClusterSize,
+        {
+          fallback: DEFAULT_OPTIONS.clusterHdbscanMinClusterSize,
+          min: 2,
+          max: 5000,
+        },
+      ),
+      clusterHdbscanMinSamples: asIntInRange(parsed.clusterHdbscanMinSamples, {
+        fallback: DEFAULT_OPTIONS.clusterHdbscanMinSamples,
+        min: 1,
+        max: 2000,
+      }),
+      clusterNoisePolicy: asOneOf(
+        parsed.clusterNoisePolicy,
+        ["nearest", "singleton", "drop"] as const,
+        DEFAULT_OPTIONS.clusterNoisePolicy,
+      ),
       strict: asBoolean(parsed.strict, DEFAULT_OPTIONS.strict),
       limit: asNullableInt(parsed.limit),
       evalCount: asNullableInt(parsed.evalCount),

@@ -5,6 +5,8 @@ import type {
   ArtifactStatus,
   PhaseStatus,
   PhaseTimelineItem,
+  RunClusterConversationRecord,
+  RunClusterConversationsResponse,
   RunDetailResponse,
   RunEventItem,
   RunListItem,
@@ -446,15 +448,21 @@ function derivePhaseTimeline(params: {
 function deriveOverallProgressPercent(
   phaseTimeline: PhaseTimelineItem[],
 ): number {
+  const activePhases = phaseTimeline.filter(
+    (item) => item.status !== "skipped",
+  );
+  if (activePhases.length === 0) {
+    return phaseTimeline.length > 0 ? 100 : 0;
+  }
   if (phaseTimeline.length === 0) {
     return 0;
   }
 
-  const totalPhases = phaseTimeline.length;
-  const completedCount = phaseTimeline.filter(
+  const totalPhases = activePhases.length;
+  const completedCount = activePhases.filter(
     (item) => item.status === "completed" || item.status === "resumed",
   ).length;
-  const runningPhase = phaseTimeline.find((item) => item.status === "running");
+  const runningPhase = activePhases.find((item) => item.status === "running");
 
   let progress = (completedCount / totalPhases) * 100;
   if (runningPhase?.percent !== null && runningPhase?.percent !== undefined) {
@@ -728,6 +736,12 @@ export async function loadRunDetail(
   const failedPhases = phaseTimeline.filter(
     (item) => item.status === "failed",
   ).length;
+  const skippedPhases = phaseTimeline.filter(
+    (item) => item.status === "skipped",
+  ).length;
+  const activePhases = phaseTimeline.filter(
+    (item) => item.status !== "skipped",
+  );
   const completedPhases = phaseTimeline.filter(
     (item) => item.status === "completed" || item.status === "resumed",
   ).length;
@@ -743,8 +757,9 @@ export async function loadRunDetail(
     phaseTimeline,
     latestEvents,
     summary: {
-      totalPhases: phaseTimeline.length,
+      totalPhases: activePhases.length,
       completedPhases,
+      skippedPhases,
       failedPhases,
       requiredArtifactsMissing,
       optionalArtifactsPresent,
@@ -980,6 +995,9 @@ export async function loadRunVisuals(
   const hierarchyPayload = await readJsonFile(
     path.join(runRoot, "clusters", "hierarchy.json"),
   );
+  const hierarchyBuildReportPayload = await readJsonFile(
+    path.join(runRoot, "clusters", "hierarchy_build_report.json"),
+  );
   const treeViewPayload = await readJsonFile(
     path.join(runRoot, "viz", "tree_view.json"),
   );
@@ -1023,10 +1041,34 @@ export async function loadRunVisuals(
     Math.trunc(asNumber(hierarchyPayload?.max_level, Number.NaN)),
     hierarchyNodes.reduce((max, node) => Math.max(max, node.level), -1),
   );
+  const generatedLevelsRaw = asNumber(
+    hierarchyPayload?.generated_levels ??
+      hierarchyBuildReportPayload?.generated_levels,
+    Number.NaN,
+  );
   const runFingerprint = asRecord(manifestPayload?.run_fingerprint);
   const requestedLevelsRaw = asNumber(
-    manifestPayload?.hierarchy_levels ?? runFingerprint?.hierarchy_levels,
+    hierarchyPayload?.requested_levels ??
+      hierarchyBuildReportPayload?.requested_levels ??
+      manifestPayload?.hierarchy_levels ??
+      runFingerprint?.hierarchy_levels,
     Number.NaN,
+  );
+  const depthPolicy = asString(
+    hierarchyPayload?.depth_policy ??
+      hierarchyBuildReportPayload?.depth_policy ??
+      manifestPayload?.hierarchy_depth_policy ??
+      runFingerprint?.hierarchy_depth_policy,
+  );
+  const depthStopReason = asString(
+    hierarchyPayload?.depth_stop_reason ??
+      hierarchyBuildReportPayload?.depth_stop_reason ??
+      manifestPayload?.hierarchy_depth_stop_reason,
+  );
+  const whyNotDeeper = asString(
+    hierarchyPayload?.why_not_deeper ??
+      hierarchyBuildReportPayload?.why_not_deeper ??
+      manifestPayload?.hierarchy_why_not_deeper,
   );
   const hierarchy =
     topLevelClusters.length > 0 || hierarchyNodes.length > 0
@@ -1043,10 +1085,19 @@ export async function loadRunVisuals(
             Number.isFinite(generatedMaxLevel) && generatedMaxLevel >= 0
               ? generatedMaxLevel
               : null,
+          generatedLevels:
+            Number.isFinite(generatedLevelsRaw) && generatedLevelsRaw > 0
+              ? Math.trunc(generatedLevelsRaw)
+              : Number.isFinite(generatedMaxLevel) && generatedMaxLevel >= 0
+                ? generatedMaxLevel + 1
+                : null,
           requestedLevels:
             Number.isFinite(requestedLevelsRaw) && requestedLevelsRaw >= 0
               ? Math.trunc(requestedLevelsRaw)
               : null,
+          depthPolicy: depthPolicy || null,
+          depthStopReason: depthStopReason || null,
+          whyNotDeeper: whyNotDeeper || null,
           topLevelClusters,
           rootNodeIds,
           nodes: hierarchyNodes,
@@ -1129,5 +1180,161 @@ export async function loadRunVisuals(
     hierarchy,
     privacy,
     evaluation,
+  };
+}
+
+export async function loadClusterConversations(
+  runId: string,
+  clusterId: number,
+): Promise<RunClusterConversationsResponse | null> {
+  const trimmedRunId = runId.trim();
+  if (!trimmedRunId || !Number.isFinite(clusterId)) {
+    return null;
+  }
+  const normalizedClusterId = Math.trunc(clusterId);
+
+  const runsRoot = normalizeRunsRoot();
+  const runs = await discoverRuns(0);
+  const selectedRun = runs.find((item) => item.runId === trimmedRunId);
+  if (!selectedRun) {
+    return null;
+  }
+
+  const runRoot = selectedRun.runRoot;
+  const manifestPayload = await readJsonFile(
+    path.join(runRoot, "run_manifest.json"),
+  );
+  const expectedConversationCount = Math.max(
+    asNumber(manifestPayload?.conversation_count_processed, 0),
+    asNumber(manifestPayload?.conversation_count_input, 0),
+  );
+  const readCap = Math.max(1024, expectedConversationCount + 256);
+
+  const assignmentRows = await readJsonlFile(
+    path.join(runRoot, "clusters", "base_assignments.jsonl"),
+    readCap,
+  );
+  const assignmentByConversation = new Map<
+    string,
+    {
+      userId: string;
+    }
+  >();
+  for (const row of assignmentRows) {
+    const conversationId = asString(row.conversation_id);
+    const rowClusterId = asNumber(row.cluster_id, Number.NaN);
+    if (
+      !conversationId ||
+      !Number.isFinite(rowClusterId) ||
+      Math.trunc(rowClusterId) !== normalizedClusterId
+    ) {
+      continue;
+    }
+    assignmentByConversation.set(conversationId, {
+      userId: asString(row.user_id),
+    });
+  }
+
+  if (assignmentByConversation.size === 0) {
+    return {
+      generatedAtUtc: new Date().toISOString(),
+      runsRoot,
+      runId: selectedRun.runId,
+      clusterId: normalizedClusterId,
+      totalConversations: 0,
+      metadataAvailable: false,
+      records: [],
+    };
+  }
+
+  const targetConversationIds = new Set(assignmentByConversation.keys());
+  const facetByConversation = new Map<string, JsonRecord>();
+  const facetRows = await readJsonlFile(
+    path.join(runRoot, "facets", "facets.jsonl"),
+    readCap,
+  );
+  for (const row of facetRows) {
+    const conversationId = asString(row.conversation_id);
+    if (!conversationId || !targetConversationIds.has(conversationId)) {
+      continue;
+    }
+    facetByConversation.set(conversationId, row);
+  }
+
+  const inputByConversation = new Map<
+    string,
+    {
+      userId: string;
+      timestampUtc: string | null;
+      userMetadata: JsonRecord | null;
+    }
+  >();
+  let metadataAvailable = false;
+  const inputDatasetPath = asString(manifestPayload?.input_dataset_path);
+  if (inputDatasetPath) {
+    const resolvedInputPath = path.isAbsolute(inputDatasetPath)
+      ? inputDatasetPath
+      : path.resolve(process.cwd(), inputDatasetPath);
+    const inputRows = await readJsonlFile(resolvedInputPath, readCap);
+    for (const row of inputRows) {
+      const conversationId = asString(row.conversation_id);
+      if (!conversationId || !targetConversationIds.has(conversationId)) {
+        continue;
+      }
+      const userMetadata = asRecord(row.metadata);
+      if (userMetadata) {
+        metadataAvailable = true;
+      }
+      inputByConversation.set(conversationId, {
+        userId: asString(row.user_id),
+        timestampUtc: asString(row.timestamp) || null,
+        userMetadata,
+      });
+    }
+  }
+
+  const records: RunClusterConversationRecord[] = Array.from(
+    targetConversationIds,
+  )
+    .map((conversationId) => {
+      const assignment = assignmentByConversation.get(conversationId);
+      const inputRecord = inputByConversation.get(conversationId);
+      const facetRecord = facetByConversation.get(conversationId);
+      return {
+        conversationId,
+        clusterId: normalizedClusterId,
+        userId: assignment?.userId || inputRecord?.userId || "",
+        timestampUtc: inputRecord?.timestampUtc ?? null,
+        userMetadata: inputRecord?.userMetadata ?? null,
+        facet: facetRecord
+          ? {
+              summary: asString(facetRecord.summary),
+              task: asString(facetRecord.task),
+              language: asString(facetRecord.language),
+              concerningScore: toNullableNumber(facetRecord.concerning_score),
+              turnCount: toNullableNumber(facetRecord.turn_count),
+              messageCount: toNullableNumber(facetRecord.message_count),
+            }
+          : null,
+      };
+    })
+    .sort((a, b) => {
+      const timestampSort =
+        safeDateSortValue(b.timestampUtc ?? "") -
+        safeDateSortValue(a.timestampUtc ?? "");
+      if (timestampSort !== 0) {
+        return timestampSort;
+      }
+      return a.conversationId.localeCompare(b.conversationId);
+    });
+
+  return {
+    generatedAtUtc: new Date().toISOString(),
+    runsRoot,
+    runId: selectedRun.runId,
+    clusterId: normalizedClusterId,
+    totalConversations: records.length,
+    metadataAvailable,
+    records,
   };
 }

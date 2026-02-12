@@ -69,6 +69,7 @@ export type RunDetailResponse = {
   summary: {
     totalPhases: number;
     completedPhases: number;
+    skippedPhases: number;
     failedPhases: number;
     requiredArtifactsMissing: number;
     optionalArtifactsPresent: number;
@@ -129,6 +130,32 @@ export type RunVisualEvalAblation = {
   weightedF1: number;
 };
 
+export type RunClusterConversationRecord = {
+  conversationId: string;
+  clusterId: number;
+  userId: string;
+  timestampUtc: string | null;
+  userMetadata: Record<string, unknown> | null;
+  facet: {
+    summary: string;
+    task: string;
+    language: string;
+    concerningScore: number | null;
+    turnCount: number | null;
+    messageCount: number | null;
+  } | null;
+};
+
+export type RunClusterConversationsResponse = {
+  generatedAtUtc: string;
+  runsRoot: string;
+  runId: string;
+  clusterId: number;
+  totalConversations: number;
+  metadataAvailable: boolean;
+  records: RunClusterConversationRecord[];
+};
+
 export type RunVisualsResponse = {
   generatedAtUtc: string;
   runsRoot: string;
@@ -144,7 +171,11 @@ export type RunVisualsResponse = {
     topLevelCount: number;
     leafCount: number;
     maxLevel: number | null;
+    generatedLevels: number | null;
     requestedLevels: number | null;
+    depthPolicy: string | null;
+    depthStopReason: string | null;
+    whyNotDeeper: string | null;
     topLevelClusters: RunVisualTopCluster[];
     rootNodeIds: string[];
     nodes: RunVisualHierarchyNode[];
@@ -181,6 +212,15 @@ export type RunLaunchOptions = {
   streaming: boolean;
   streamChunkSize: number;
   hierarchyLevels: number;
+  hierarchyDepthPolicy: "adaptive" | "strict_min";
+  clusterStrategy: "kmeans" | "hdbscan" | "hybrid";
+  clusterLeafMode: "fixed" | "auto";
+  clusterTargetLeafSize: number;
+  clusterMinLeafClusters: number;
+  clusterMaxLeafClusters: number;
+  clusterHdbscanMinClusterSize: number;
+  clusterHdbscanMinSamples: number;
+  clusterNoisePolicy: "nearest" | "singleton" | "drop";
   strict: boolean;
   limit: number | null;
   evalCount: number | null;

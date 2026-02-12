@@ -58,6 +58,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type {
+  RunClusterConversationsResponse,
   RunVisualHierarchyNode,
   RunVisualMapPoint,
   RunVisualsResponse,
@@ -337,6 +338,38 @@ function formatShare(value: number): string {
   return `${(Math.max(0, Math.min(1, value)) * 100).toFixed(1)}%`;
 }
 
+function formatTimestamp(value: string | null): string {
+  if (!value) {
+    return "n/a";
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(parsed));
+}
+
+function metadataPreview(value: unknown): string {
+  if (typeof value === "string") {
+    return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null || value === undefined) {
+    return "null";
+  }
+  try {
+    const encoded = JSON.stringify(value);
+    return encoded.length > 120 ? `${encoded.slice(0, 117)}...` : encoded;
+  } catch {
+    return "[unavailable]";
+  }
+}
+
 function hashString(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -474,6 +507,15 @@ export function RunVisualSummary({
     "sunburst" | "icicle"
   >("sunburst");
   const [activeSunburstNodeId, setActiveSunburstNodeId] = useState("");
+  const [leafRecordsNodeId, setLeafRecordsNodeId] = useState<string>("");
+  const [leafRecordsClusterId, setLeafRecordsClusterId] = useState<
+    number | null
+  >(null);
+  const [leafRecordsPayload, setLeafRecordsPayload] =
+    useState<RunClusterConversationsResponse | null>(null);
+  const [leafRecordsLoading, setLeafRecordsLoading] = useState(false);
+  const [leafRecordsError, setLeafRecordsError] = useState("");
+  const [leafRecordSearch, setLeafRecordSearch] = useState("");
 
   useEffect(() => {
     if (!isHierarchyDialogOpen) {
@@ -502,6 +544,16 @@ export function RunVisualSummary({
     : [];
   const selectedLeaves = selectedChildren.filter((node) => node.level === 0);
   const selectedGroups = selectedChildren.filter((node) => node.level > 0);
+  const leafNodeByClusterId = useMemo(() => {
+    const byClusterId = new Map<number, RunVisualHierarchyNode>();
+    for (const node of hierarchyNodes) {
+      if (node.level !== 0 || node.sourceClusterId === null) {
+        continue;
+      }
+      byClusterId.set(node.sourceClusterId, node);
+    }
+    return byClusterId;
+  }, [hierarchyNodes]);
   const selectedParentNode =
     selectedHierarchyNode?.parentId &&
     nodeById.has(selectedHierarchyNode.parentId)
@@ -527,6 +579,11 @@ export function RunVisualSummary({
       })
       .sort((a, b) => b.size - a.size);
   }, [childIdsByParent, nodeById, selectedHierarchyNode, selectedParentNode]);
+  const openLeafRecords = (nodeId: string, clusterId: number) => {
+    setLeafRecordsNodeId(nodeId);
+    setLeafRecordsClusterId(clusterId);
+    setLeafRecordSearch("");
+  };
   const hierarchyBreadcrumb = useMemo(() => {
     if (!selectedHierarchyNode) {
       return [];
@@ -970,17 +1027,24 @@ export function RunVisualSummary({
       ? selectedHierarchyNode.size / Math.max(1, selectedParentNode.size)
       : 1;
   const generatedHierarchyDepth =
-    visuals?.hierarchy?.maxLevel !== null &&
-    visuals?.hierarchy?.maxLevel !== undefined &&
-    visuals.hierarchy.maxLevel >= 0
-      ? visuals.hierarchy.maxLevel + 1
-      : null;
+    visuals?.hierarchy?.generatedLevels !== null &&
+    visuals?.hierarchy?.generatedLevels !== undefined &&
+    visuals.hierarchy.generatedLevels > 0
+      ? visuals.hierarchy.generatedLevels
+      : visuals?.hierarchy?.maxLevel !== null &&
+          visuals?.hierarchy?.maxLevel !== undefined &&
+          visuals.hierarchy.maxLevel >= 0
+        ? visuals.hierarchy.maxLevel + 1
+        : null;
   const requestedHierarchyLevels =
     visuals?.hierarchy?.requestedLevels !== null &&
     visuals?.hierarchy?.requestedLevels !== undefined &&
     visuals.hierarchy.requestedLevels >= 0
       ? visuals.hierarchy.requestedLevels
       : null;
+  const hierarchyDepthPolicy = visuals?.hierarchy?.depthPolicy ?? null;
+  const hierarchyDepthStopReason = visuals?.hierarchy?.depthStopReason ?? null;
+  const hierarchyWhyNotDeeper = visuals?.hierarchy?.whyNotDeeper ?? null;
   const resolveSegmentIdFromEventTarget = (
     target: EventTarget | null,
   ): string | null => {
@@ -1047,6 +1111,91 @@ export function RunVisualSummary({
     }
     setActiveSunburstNodeId(hierarchyFocusNodeId);
   }, [activeSunburstNodeId, hierarchyFocusNodeId, nodeById]);
+
+  useEffect(() => {
+    if (leafRecordsClusterId === null || !visuals?.runId) {
+      setLeafRecordsPayload(null);
+      setLeafRecordsError("");
+      setLeafRecordsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setLeafRecordsLoading(true);
+    setLeafRecordsError("");
+
+    void fetch(
+      `/api/runs/${encodeURIComponent(visuals.runId)}/clusters/${leafRecordsClusterId}/conversations`,
+      {
+        cache: "no-store",
+        signal: controller.signal,
+      },
+    )
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(
+            payload?.error ||
+              `Failed to load cluster conversations (${response.status}).`,
+          );
+        }
+        return (await response.json()) as RunClusterConversationsResponse;
+      })
+      .then((payload) => {
+        if (!controller.signal.aborted) {
+          setLeafRecordsPayload(payload);
+        }
+      })
+      .catch((fetchError: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setLeafRecordsError(
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Failed to load cluster conversations.",
+        );
+        setLeafRecordsPayload(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLeafRecordsLoading(false);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [leafRecordsClusterId, visuals?.runId]);
+
+  const leafRecordsDialogOpen = leafRecordsClusterId !== null;
+  const selectedLeafRecordsNode =
+    leafRecordsNodeId && nodeById.has(leafRecordsNodeId)
+      ? (nodeById.get(leafRecordsNodeId) ?? null)
+      : leafRecordsClusterId !== null
+        ? (leafNodeByClusterId.get(leafRecordsClusterId) ?? null)
+        : null;
+  const filteredLeafRecords = useMemo(() => {
+    const rows = leafRecordsPayload?.records ?? [];
+    const query = leafRecordSearch.trim().toLowerCase();
+    if (!query) {
+      return rows;
+    }
+    return rows.filter((row) => {
+      const metadataHaystack = row.userMetadata
+        ? Object.entries(row.userMetadata)
+            .map(([key, value]) => `${key}:${metadataPreview(value)}`)
+            .join(" ")
+        : "";
+      const facetSummary = row.facet?.summary ?? "";
+      const facetTask = row.facet?.task ?? "";
+      const facetLanguage = row.facet?.language ?? "";
+      const haystack =
+        `${row.conversationId} ${row.userId} ${facetSummary} ${facetTask} ${facetLanguage} ${metadataHaystack}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [leafRecordSearch, leafRecordsPayload?.records]);
 
   return (
     <Card className="clio-shell border-border/70">
@@ -1119,7 +1268,20 @@ export function RunVisualSummary({
                         <Badge variant="outline" className="gap-1">
                           depth {generatedHierarchyDepth}/
                           {requestedHierarchyLevels}
-                          <HelpTooltip content="Generated hierarchy depth vs requested hierarchy levels. Requested levels are a cap, not a guarantee." />
+                          <HelpTooltip
+                            content={`Generated hierarchy depth vs requested hierarchy levels. Policy: ${hierarchyDepthPolicy ?? "adaptive"}. Requested levels are an upper bound.`}
+                          />
+                        </Badge>
+                      ) : null}
+                      {generatedHierarchyDepth !== null &&
+                      requestedHierarchyLevels !== null &&
+                      generatedHierarchyDepth < requestedHierarchyLevels &&
+                      hierarchyDepthStopReason ? (
+                        <Badge variant="outline" className="gap-1">
+                          reason {hierarchyDepthStopReason}
+                          {hierarchyWhyNotDeeper ? (
+                            <HelpTooltip content={hierarchyWhyNotDeeper} />
+                          ) : null}
                         </Badge>
                       ) : null}
                     </div>
@@ -1706,7 +1868,19 @@ export function RunVisualSummary({
                                       <p className="mt-1 text-[11px] text-muted-foreground">
                                         Generated depth{" "}
                                         {generatedHierarchyDepth} of requested{" "}
-                                        {requestedHierarchyLevels} levels.
+                                        {requestedHierarchyLevels} levels
+                                        {hierarchyDepthPolicy
+                                          ? ` (${hierarchyDepthPolicy} policy).`
+                                          : "."}
+                                      </p>
+                                    ) : null}
+                                    {generatedHierarchyDepth !== null &&
+                                    requestedHierarchyLevels !== null &&
+                                    generatedHierarchyDepth <
+                                      requestedHierarchyLevels &&
+                                    hierarchyWhyNotDeeper ? (
+                                      <p className="mt-1 text-[11px] text-muted-foreground">
+                                        {hierarchyWhyNotDeeper}
                                       </p>
                                     ) : null}
                                   </div>
@@ -2092,6 +2266,22 @@ export function RunVisualSummary({
                                   {selectedHierarchyNode.sourceClusterId}
                                 </Badge>
                               ) : null}
+                              {selectedHierarchyNode.level === 0 &&
+                              selectedHierarchyNode.sourceClusterId !== null ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7"
+                                  onClick={() =>
+                                    openLeafRecords(
+                                      selectedHierarchyNode.id,
+                                      selectedHierarchyNode.sourceClusterId as number,
+                                    )
+                                  }
+                                >
+                                  View chats
+                                </Button>
+                              ) : null}
                             </div>
 
                             {selectedGroups.length > 0 ? (
@@ -2202,9 +2392,24 @@ export function RunVisualSummary({
                                           of parent
                                         </p>
                                         {leaf.sourceClusterId !== null ? (
-                                          <p className="mt-1 text-[11px] text-muted-foreground">
-                                            cluster id {leaf.sourceClusterId}
-                                          </p>
+                                          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                                            <p className="text-[11px] text-muted-foreground">
+                                              cluster id {leaf.sourceClusterId}
+                                            </p>
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-7"
+                                              onClick={() =>
+                                                openLeafRecords(
+                                                  leaf.id,
+                                                  leaf.sourceClusterId as number,
+                                                )
+                                              }
+                                            >
+                                              View chats
+                                            </Button>
+                                          </div>
                                         ) : null}
                                       </div>
                                     );
@@ -2298,6 +2503,163 @@ export function RunVisualSummary({
                       </div>
                     )}
                   </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog
+              open={leafRecordsDialogOpen}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setLeafRecordsClusterId(null);
+                  setLeafRecordsNodeId("");
+                }
+              }}
+            >
+              <DialogContent className="h-[88dvh] w-[96vw] max-w-[96vw] overflow-hidden p-0 sm:max-w-[96vw]">
+                <DialogHeader className="border-b px-6 py-4">
+                  <DialogTitle className="text-base">
+                    Cluster conversations
+                  </DialogTitle>
+                  <DialogDescription>
+                    {selectedLeafRecordsNode
+                      ? selectedLeafRecordsNode.name
+                      : "Leaf cluster"}{" "}
+                    {leafRecordsClusterId !== null
+                      ? `(cluster ${leafRecordsClusterId})`
+                      : ""}{" "}
+                    - conversation IDs, user metadata, and facets only.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex h-[calc(88dvh-88px)] min-h-0 flex-col px-6 py-4">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">
+                      total {leafRecordsPayload?.totalConversations ?? 0}
+                    </Badge>
+                    <Badge variant="outline">
+                      shown {filteredLeafRecords.length}
+                    </Badge>
+                    <Badge variant="outline">
+                      metadata{" "}
+                      {leafRecordsPayload?.metadataAvailable
+                        ? "available"
+                        : "limited"}
+                    </Badge>
+                  </div>
+                  <div className="mb-3">
+                    <Input
+                      value={leafRecordSearch}
+                      onChange={(event) =>
+                        setLeafRecordSearch(event.target.value)
+                      }
+                      placeholder="Search by conversation ID, user ID, task, language, or metadata"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+
+                  {leafRecordsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Loading cluster conversations...
+                    </div>
+                  ) : null}
+
+                  {leafRecordsError ? (
+                    <Alert variant="destructive" className="mb-3">
+                      <AlertTriangle className="size-4" />
+                      <AlertTitle>Could not load conversations</AlertTitle>
+                      <AlertDescription>{leafRecordsError}</AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {!leafRecordsLoading && !leafRecordsError ? (
+                    <ScrollArea className="min-h-0 flex-1 rounded-md border border-border/70 bg-muted/10 p-3">
+                      <div className="space-y-2">
+                        {filteredLeafRecords.map((record) => (
+                          <div
+                            key={`${record.clusterId}-${record.conversationId}`}
+                            className="rounded-lg border border-border/70 bg-card/70 p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[11px]"
+                              >
+                                chat {record.conversationId}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[11px]"
+                              >
+                                user {record.userId || "n/a"}
+                              </Badge>
+                              <Badge variant="outline" className="text-[11px]">
+                                {formatTimestamp(record.timestampUtc)}
+                              </Badge>
+                            </div>
+
+                            {record.facet ? (
+                              <div className="mt-2 grid gap-2 lg:grid-cols-[1fr_auto]">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">
+                                    {record.facet.summary ||
+                                      "No facet summary."}
+                                  </p>
+                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                    task {record.facet.task || "n/a"} - language{" "}
+                                    {record.facet.language || "n/a"} - concern{" "}
+                                    {record.facet.concerningScore !== null
+                                      ? record.facet.concerningScore.toFixed(2)
+                                      : "n/a"}
+                                  </p>
+                                </div>
+                                <div className="text-[11px] text-muted-foreground">
+                                  turns {record.facet.turnCount ?? "n/a"} -
+                                  messages {record.facet.messageCount ?? "n/a"}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                Facet record not found for this conversation.
+                              </p>
+                            )}
+
+                            <div className="mt-2 rounded-md border border-border/60 bg-muted/20 p-2">
+                              <p className="text-[11px] font-medium">
+                                User metadata
+                              </p>
+                              {record.userMetadata ? (
+                                <div className="mt-1 grid gap-1 text-[11px] text-muted-foreground md:grid-cols-2">
+                                  {Object.entries(record.userMetadata)
+                                    .slice(0, 8)
+                                    .map(([key, value]) => (
+                                      <p
+                                        key={`${record.conversationId}-${key}`}
+                                      >
+                                        <span className="font-medium text-foreground">
+                                          {key}
+                                        </span>
+                                        : {metadataPreview(value)}
+                                      </p>
+                                    ))}
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-muted-foreground">
+                                  No user metadata attached to this
+                                  conversation.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {filteredLeafRecords.length === 0 ? (
+                          <p className="rounded-md border border-dashed border-border/70 px-3 py-5 text-center text-xs text-muted-foreground">
+                            No conversations match this filter.
+                          </p>
+                        ) : null}
+                      </div>
+                    </ScrollArea>
+                  ) : null}
                 </div>
               </DialogContent>
             </Dialog>

@@ -13,6 +13,9 @@ It reads run artifacts from disk and follows a two-level information flow:
 - map, hierarchy, privacy, and evaluation visuals
 - artifact readiness and run lifecycle summaries
 - launch-time hierarchy depth control (`2..20`, clamped)
+- global light/dark mode toggle (top-right)
+- overall progress based on active phases (skipped phases shown separately)
+- leaf-cluster chat drill-down with conversation IDs, user metadata, and facets (no transcript text)
 
 ## Local Development
 
@@ -38,6 +41,7 @@ This matches the current CLI output convention (`output_dir: runs`).
 - `GET /api/runs` - run list with summarized state
 - `GET /api/runs/[runId]` - full detail payload for one run
 - `GET /api/runs/[runId]/visuals` - chart-ready visual payload for one run
+- `GET /api/runs/[runId]/clusters/[clusterId]/conversations` - conversation IDs + user metadata + facets for one leaf cluster
 - `POST /api/runs/launch` - launch a background CLI run from uploaded JSONL input
   - accepts hierarchy depth override via `options.hierarchyLevels` (`2..20`)
 - `GET /api/runs/jobs` - list UI-launched background jobs

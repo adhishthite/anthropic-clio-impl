@@ -1329,7 +1329,11 @@ export function LiveRunDashboard({
               <DashboardStatCard
                 title="Overall progress"
                 value={`${detailData.run.overallProgressPercent.toFixed(1)}%`}
-                subtitle={`${detailData.summary.completedPhases}/${detailData.summary.totalPhases} phases done`}
+                subtitle={
+                  detailData.summary.skippedPhases > 0
+                    ? `${detailData.summary.completedPhases}/${detailData.summary.totalPhases} active phases done - ${detailData.summary.skippedPhases} skipped`
+                    : `${detailData.summary.completedPhases}/${detailData.summary.totalPhases} phases done`
+                }
                 icon={<ShieldCheck className="size-4 text-emerald-600" />}
                 tone="success"
               />

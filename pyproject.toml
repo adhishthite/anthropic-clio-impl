@@ -15,7 +15,6 @@ dependencies = [
     "pydantic-settings>=2.7.0",
     "pyyaml>=6.0.0",
     "scikit-learn>=1.6.0",
-    "streamlit>=1.42.0",
     "tenacity>=9.0.0",
 ]
 
@@ -30,7 +29,6 @@ dev = [
 [project.scripts]
 clio = "clio_pipeline.cli:main"
 clio-generate-mock-data = "clio_pipeline.mock_data:main"
-clio-viz = "clio_pipeline.viz_ui.cli:main"
 
 [build-system]
 requires = ["hatchling"]

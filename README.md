@@ -2,10 +2,9 @@
 
 CLIO-inspired Python pipeline for privacy-preserving analysis of AI conversation usage patterns.
 
-`ant-clio` gives you two ways to work:
+`ant-clio` is terminal-first:
 
-- Terminal-first workflow (`clio`) for automation and CI
-- Visual workflow (`clio-viz`) for upload, validation, run launch, and live monitoring
+- CLI workflow (`clio`) for automation and CI
 
 ## Pipeline At A Glance
 
@@ -76,28 +75,9 @@ uv run clio-generate-mock-data \
   --output data/mock/conversations_llm_200.jsonl
 ```
 
-## UI Workflow (Upload + Run)
+## Optional Web UI
 
-Start UI:
-
-```bash
-uv run clio-viz --live --refresh-seconds 4
-```
-
-Open:
-
-- `http://127.0.0.1:8501`
-
-In UI:
-
-1. Go to `Ingest & Run`
-2. Upload JSONL (max upload size: 50 MB)
-3. Save upload
-4. Validate input
-5. Start run
-6. Watch logs and status in the same page
-
-Note: auto-refresh is intentionally paused on `Ingest & Run` to avoid interrupting uploads.
+Use the Next.js UI workspace in `clio-ui-v2` for visual run exploration and launch.
 
 ## CLI Recipes
 

@@ -338,6 +338,6 @@ Testing notes:
 
 Visualization module:
 
-- Added `clio-viz` entrypoint for local run exploration UI.
+- Streamlit `clio-viz` UI retired. Use `clio-ui-v2` for run exploration UI.
 - UI can target a run ID and display overview, map, hierarchy, privacy, evaluation, and artifact status pages.
 - Added non-interactive `--check-only` mode for CI-friendly run validation.

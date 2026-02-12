@@ -61,7 +61,7 @@ uv run clio doctor --network-check
 ### Long Runs / Unclear Progress
 
 - Use CLI ETA logs per phase.
-- Use `clio-viz --live` and open `Ingest & Run` + `Overview` tabs for checkpoints and events.
+- Use `clio-ui-v2` to inspect run lifecycle, checkpoints, and events.
 - For large data, use `--streaming --stream-chunk-size <N>`.
 
 ### Recoverable Warnings in Automation

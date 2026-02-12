@@ -23,7 +23,9 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(description="Promote partial Phase 2 to final.")
     parser.add_argument("run_id", help="Run ID to promote")
-    parser.add_argument("--runs-root", default="runs", help="Root directory for runs (default: runs)")
+    parser.add_argument(
+        "--runs-root", default="runs", help="Root directory for runs (default: runs)",
+    )
     args = parser.parse_args()
 
     run_root = Path(args.runs_root) / args.run_id
@@ -45,7 +47,10 @@ def main() -> None:
         sys.exit(1)
 
     if final_path.exists():
-        print(f"ERROR: Final facets.jsonl already exists - phase2 may already be complete.", file=sys.stderr)
+        print(
+            "ERROR: Final facets.jsonl already exists - phase2 may already be complete.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Count records in partial
@@ -71,7 +76,10 @@ def main() -> None:
             error_count = sum(1 for line in f if line.strip())
         if error_count > 0:
             shutil.copy2(errors_partial, errors_final)
-            print(f"[2/4] Copied facets_errors.partial.jsonl -> facets_errors.jsonl ({error_count} errors)")
+            print(
+                f"[2/4] Copied facets_errors.partial.jsonl -> facets_errors.jsonl"
+                f" ({error_count} errors)"
+            )
         else:
             print("[2/4] Error partial is empty - skipped")
     else:
@@ -89,11 +97,14 @@ def main() -> None:
     checkpoint["error_count_recorded"] = error_count
     checkpoint["updated_at_utc"] = datetime.now(UTC).isoformat()
     checkpoint_path.write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
-    print(f"[3/4] Updated checkpoint: completed=true")
+    print("[3/4] Updated checkpoint: completed=true")
 
     # --- 4. Update manifest ---
     if not manifest_path.exists():
-        print(f"WARNING: No manifest found at {manifest_path} - creating minimal one", file=sys.stderr)
+        print(
+            f"WARNING: No manifest found at {manifest_path} - creating minimal one",
+            file=sys.stderr,
+        )
         manifest: dict = {"run_id": args.run_id}
     else:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -121,7 +132,10 @@ def main() -> None:
 
     print()
     print(f"Done. Phase 2 promoted with {facet_count} facets.")
-    print(f"You can now resume with: uv run clio run --resume --run-id {args.run_id} --with-clustering")
+    print(
+        f"You can now resume with:"
+        f" uv run clio run --resume --run-id {args.run_id} --with-clustering"
+    )
 
 
 if __name__ == "__main__":

@@ -1295,6 +1295,9 @@ def run_phase3_base_clustering(
         )
         client = created_client
 
+    embeddings_dir = ensure_directory(run_root / "embeddings")
+    embedding_checkpoint_path = embeddings_dir / "summary_embeddings.partial.npy"
+
     try:
         embeddings = embed_texts_in_batches(
             texts,
@@ -1305,6 +1308,7 @@ def run_phase3_base_clustering(
                 if progress_callback is not None
                 else None
             ),
+            checkpoint_path=embedding_checkpoint_path,
         )
     finally:
         if created_client is not None:
@@ -1334,7 +1338,6 @@ def run_phase3_base_clustering(
         min_conversations_per_cluster=settings.min_conversations_per_cluster,
     )
 
-    embeddings_dir = ensure_directory(run_root / "embeddings")
     clusters_dir = ensure_directory(run_root / "clusters")
     viz_dir = ensure_directory(run_root / "viz")
 
@@ -1874,6 +1877,8 @@ def run_phase4_hierarchy_scaffold(
         )
         client = created_client
 
+    hierarchy_embedding_checkpoint = clusters_dir / "hierarchy_embeddings.partial.npy"
+
     try:
         embeddings = embed_texts_in_batches(
             texts,
@@ -1884,6 +1889,7 @@ def run_phase4_hierarchy_scaffold(
                 if progress_callback is not None
                 else None
             ),
+            checkpoint_path=hierarchy_embedding_checkpoint,
         )
     finally:
         if created_client is not None:

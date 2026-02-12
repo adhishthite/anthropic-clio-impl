@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "6e5512b12d17",
+  "session_id": "1e33ec92-f32f-45d2-b766-1f22fdab2b71",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T18:03:55.759966Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "clio-ui-v2/src/app/api/runs/jobs/[runId]/logs/route.ts",
+    "clio-ui-v2/src/app/runs/[runId]/run-detail-content.tsx",
+    "clio-ui-v2/src/components/clio/live-run-dashboard.tsx",
+    "clio-ui-v2/src/components/clio/run-orchestration-panel.tsx",
+    "clio-ui-v2/src/lib/clio-run-jobs.ts",
+    "clio-ui-v2/src/lib/clio-types.ts"
+  ],
+  "agent": "Claude Code",
+  "checkpoint_transcript_start": 664,
+  "transcript_lines_at_start": 664,
+  "token_usage": {
+    "input_tokens": 22,
+    "cache_creation_tokens": 99511,
+    "cache_read_tokens": 1286003,
+    "output_tokens": 2154,
+    "api_call_count": 12
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T18:03:55.539007Z",
+    "agent_lines": 1,
+    "human_added": 129,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 130,
+    "agent_percentage": 0.7692307692307693
+  }
+}

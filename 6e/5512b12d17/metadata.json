@@ -5,7 +5,12 @@
   "branch": "main",
   "checkpoints_count": 3,
   "files_touched": [
+    "clio-ui-v2/src/app/api/runs/jobs/[runId]/logs/route.ts",
+    "clio-ui-v2/src/app/runs/[runId]/run-detail-content.tsx",
+    "clio-ui-v2/src/components/clio/live-run-dashboard.tsx",
+    "clio-ui-v2/src/components/clio/run-orchestration-panel.tsx",
     "clio-ui-v2/src/lib/clio-run-jobs.ts",
+    "clio-ui-v2/src/lib/clio-types.ts",
     "configs/default.yaml",
     "scripts/promote_partial_phase2.py"
   ],
@@ -16,13 +21,20 @@
       "context": "/6e/5512b12d17/0/context.md",
       "content_hash": "/6e/5512b12d17/0/content_hash.txt",
       "prompt": "/6e/5512b12d17/0/prompt.txt"
+    },
+    {
+      "metadata": "/6e/5512b12d17/1/metadata.json",
+      "transcript": "/6e/5512b12d17/1/full.jsonl",
+      "context": "/6e/5512b12d17/1/context.md",
+      "content_hash": "/6e/5512b12d17/1/content_hash.txt",
+      "prompt": "/6e/5512b12d17/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 740,
-    "cache_creation_tokens": 270320,
-    "cache_read_tokens": 5805016,
-    "output_tokens": 14928,
-    "api_call_count": 92
+    "input_tokens": 762,
+    "cache_creation_tokens": 369831,
+    "cache_read_tokens": 7091019,
+    "output_tokens": 17082,
+    "api_call_count": 104
   }
 }

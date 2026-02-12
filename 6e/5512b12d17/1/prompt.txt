@@ -1,0 +1,49 @@
+Run the code simplifier agent as multi-agent set up for the UI and the Python code.. think hard
+
+---
+
+<bash-input>pwd</bash-input>
+
+---
+
+<bash-stdout>/Users/adhishthite/Projects/temp-projects/ant-clio</bash-stdout><bash-stderr></bash-stderr>
+
+---
+
+I get this right after I start a run .. because it's not created yet..
+
+---
+
+Looks lonely.. below Run Detail, put actual Run ID in bigger font..
+
+---
+
+what else can we add to make it better and informative? and also can we make it sticky?
+
+---
+
+commit this and push
+
+---
+
+the python script has a way to transform a sample input right?
+
+---
+
+I remember giving it data/external file and it moved that to .contract etc..
+
+---
+
+ah right.. so similar to that I am now giving 100k.jsonl.. can you transofrm it to .contract.jsonl?
+
+---
+
+[Request interrupted by user]
+
+---
+
+wait I have not given it yet.. it's loading..
+
+---
+
+Oh it's 50k.. here's the file:  /Users/adhishthite/WebstormProjects/old/elasticgpt-agents/elasticgpt-backend/elasticgpt-chats-prod-latest-50k.jsonl  .. copy it to our external,, then run the norm

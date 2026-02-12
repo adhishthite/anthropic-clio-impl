@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "6e5512b12d17",
+  "session_id": "0280ad20-e7c6-45cf-98e4-3e2766d16438",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T18:03:55.399167Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "clio-ui-v2/src/lib/clio-run-jobs.ts",
+    "configs/default.yaml",
+    "scripts/promote_partial_phase2.py"
+  ],
+  "agent": "Claude Code",
+  "token_usage": {
+    "input_tokens": 740,
+    "cache_creation_tokens": 270320,
+    "cache_read_tokens": 5805016,
+    "output_tokens": 14928,
+    "api_call_count": 92
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T18:03:55.360004Z",
+    "agent_lines": 130,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 130,
+    "agent_percentage": 100
+  }
+}

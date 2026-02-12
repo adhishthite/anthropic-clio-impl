@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "6e5512b12d17",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "clio-ui-v2/src/lib/clio-run-jobs.ts",
+    "configs/default.yaml",
+    "scripts/promote_partial_phase2.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/6e/5512b12d17/0/metadata.json",
+      "transcript": "/6e/5512b12d17/0/full.jsonl",
+      "context": "/6e/5512b12d17/0/context.md",
+      "content_hash": "/6e/5512b12d17/0/content_hash.txt",
+      "prompt": "/6e/5512b12d17/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 740,
+    "cache_creation_tokens": 270320,
+    "cache_read_tokens": 5805016,
+    "output_tokens": 14928,
+    "api_call_count": 92
+  }
+}

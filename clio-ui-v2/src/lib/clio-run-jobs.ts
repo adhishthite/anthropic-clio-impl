@@ -637,6 +637,7 @@ export async function terminateRunJob(
 export async function readRunJobLogTail(params: {
   runId: string;
   lines?: number;
+  offset?: number;
   runsRoot?: string;
 }): Promise<{
   runId: string;
@@ -644,10 +645,13 @@ export async function readRunJobLogTail(params: {
   running: boolean;
   logPath: string;
   lineCount: number;
+  totalLineCount: number;
   logTail: string;
 }> {
   const runsRoot = params.runsRoot ?? getRunsRootPath();
   const lines = Math.max(20, Math.min(500, Math.floor(params.lines ?? 120)));
+  const offset =
+    params.offset != null ? Math.max(0, Math.floor(params.offset)) : null;
   const payload = await readJobPayloadByRunId(params.runId, runsRoot);
   const job = payload ? await deriveJobRecord(payload, runsRoot) : null;
 
@@ -662,14 +666,19 @@ export async function readRunJobLogTail(params: {
       }
       return true;
     });
-    const tailLines = trimmed.slice(-lines);
+    const totalLineCount = trimmed.length;
+    const selectedLines =
+      offset != null
+        ? trimmed.slice(offset, offset + lines)
+        : trimmed.slice(-lines);
     return {
       runId: params.runId,
       status: job?.status ?? "unknown",
       running: job?.running ?? false,
       logPath,
-      lineCount: tailLines.length,
-      logTail: tailLines.join("\n"),
+      lineCount: selectedLines.length,
+      totalLineCount,
+      logTail: selectedLines.join("\n"),
     };
   } catch {
     return {
@@ -678,6 +687,7 @@ export async function readRunJobLogTail(params: {
       running: job?.running ?? false,
       logPath,
       lineCount: 0,
+      totalLineCount: 0,
       logTail: "",
     };
   }

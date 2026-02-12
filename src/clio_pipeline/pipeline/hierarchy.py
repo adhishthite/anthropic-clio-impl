@@ -82,12 +82,7 @@ def build_hierarchy_scaffold(
             json_schema=_HierarchyLabelPayload.model_json_schema(),
             strict_schema=True,
         )
-        try:
-            parsed = _HierarchyLabelPayload.model_validate(payload)
-        except Exception as exc:
-            raise HierarchyError(
-                f"Hierarchy label payload failed validation for group {group_label}: {exc}"
-            ) from exc
+        parsed = _validate_label_payload(payload, group_index=group_label)
 
         top_cluster_id = f"top-{top_index:03d}"
         child_ids = [int(item["cluster_id"]) for item in children]
@@ -346,8 +341,8 @@ def build_multilevel_hierarchy_scaffold(
                 and str(cached_result.get("description", "")).strip()
             ):
                 label_results_by_group[group_id] = {
-                    "name": str(cached_result.get("name", "")).strip(),
-                    "description": str(cached_result.get("description", "")).strip(),
+                    "name": str(cached_result["name"]).strip(),
+                    "description": str(cached_result["description"]).strip(),
                     "fallback_used": bool(cached_result.get("fallback_used", False)),
                     "fallback_error": cached_result.get("fallback_error"),
                     "fallback_record": cached_result.get("fallback_record"),

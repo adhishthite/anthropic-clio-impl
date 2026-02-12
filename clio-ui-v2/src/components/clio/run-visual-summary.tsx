@@ -64,16 +64,14 @@ import type {
   RunVisualMapPoint,
   RunVisualsResponse,
 } from "@/lib/clio-types";
+import { formatPercent, formatShare } from "@/lib/format-utils";
+import { cn } from "@/lib/utils";
 
 type RunVisualSummaryProps = {
   visuals: RunVisualsResponse | null;
   loading: boolean;
   error: string;
 };
-
-function formatPercent(value: number): string {
-  return `${(Math.max(0, Math.min(1, value)) * 100).toFixed(1)}%`;
-}
 
 const PRIVACY_STAGE_META: Record<string, { label: string; help: string }> = {
   raw_conversation: {
@@ -129,7 +127,7 @@ function stageLabel(stage: string): string {
 
 function stageHelp(stage: string): string {
   return (
-    PRIVACY_STAGE_META[stage]?.help || "Privacy pass-rate for this audit stage."
+    PRIVACY_STAGE_META[stage]?.help ?? "Privacy pass-rate for this audit stage."
   );
 }
 
@@ -139,7 +137,7 @@ function evalRepresentationLabel(name: string): string {
 
 function evalRepresentationHelp(name: string): string {
   return (
-    EVAL_REPRESENTATION_META[name]?.help ||
+    EVAL_REPRESENTATION_META[name]?.help ??
     "Evaluation representation used to classify synthetic conversations."
   );
 }
@@ -171,13 +169,20 @@ function HelpTooltip({
 }
 
 function levelPillClass(level: number): string {
-  if (level <= 0) {
-    return "border-emerald-300/70 bg-emerald-100/80 text-emerald-700";
+  switch (true) {
+    case level <= 0:
+      return "border-emerald-300/70 bg-emerald-100/80 text-emerald-700";
+    case level === 1:
+      return "border-sky-300/70 bg-sky-100/80 text-sky-700";
+    default:
+      return "border-violet-300/70 bg-violet-100/80 text-violet-700";
   }
-  if (level === 1) {
-    return "border-sky-300/70 bg-sky-100/80 text-sky-700";
-  }
-  return "border-violet-300/70 bg-violet-100/80 text-violet-700";
+}
+
+function getLevelLabel(level: number): string {
+  if (level <= 0) return "Leaf";
+  if (level === 1) return "Group";
+  return "Root";
 }
 
 const ROOT_ACCENT_PALETTE = [
@@ -200,10 +205,8 @@ function humanizeEnum(value: string): string {
 }
 
 function normalizeProjectionMethod(projectionMethod: string | null): string {
-  if (!projectionMethod || !projectionMethod.trim()) {
-    return "2D projection";
-  }
-  return projectionMethod.trim().toUpperCase();
+  const trimmed = projectionMethod?.trim();
+  return trimmed ? trimmed.toUpperCase() : "2D projection";
 }
 
 function projectionAxisLabel(
@@ -286,11 +289,6 @@ function ClusterMapTooltip({
       </p>
     </div>
   );
-}
-
-function formatShare(value: number): string {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  return `${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`;
 }
 
 function metadataPreview(value: unknown): string {
@@ -484,6 +482,7 @@ export function RunVisualSummary({
     if (!normalizedHierarchySearchQuery) {
       return new Set<string>();
     }
+
     const matches = new Set<string>();
     for (const node of hierarchyNodes) {
       const haystack =
@@ -582,22 +581,24 @@ export function RunVisualSummary({
     nodeById,
     rootNodeIds,
   ]);
-  const generatedHierarchyDepth =
-    visuals?.hierarchy?.generatedLevels !== null &&
-    visuals?.hierarchy?.generatedLevels !== undefined &&
-    visuals.hierarchy.generatedLevels > 0
-      ? visuals.hierarchy.generatedLevels
-      : visuals?.hierarchy?.maxLevel !== null &&
-          visuals?.hierarchy?.maxLevel !== undefined &&
-          visuals.hierarchy.maxLevel >= 0
-        ? visuals.hierarchy.maxLevel + 1
-        : null;
-  const requestedHierarchyLevels =
-    visuals?.hierarchy?.requestedLevels !== null &&
-    visuals?.hierarchy?.requestedLevels !== undefined &&
-    visuals.hierarchy.requestedLevels >= 0
-      ? visuals.hierarchy.requestedLevels
+  const generatedHierarchyDepth = (() => {
+    const generatedLevels = visuals?.hierarchy?.generatedLevels;
+    if (generatedLevels != null && generatedLevels > 0) {
+      return generatedLevels;
+    }
+    const maxLevel = visuals?.hierarchy?.maxLevel;
+    if (maxLevel != null && maxLevel >= 0) {
+      return maxLevel + 1;
+    }
+    return null;
+  })();
+
+  const requestedHierarchyLevels = (() => {
+    const requestedLevels = visuals?.hierarchy?.requestedLevels;
+    return requestedLevels != null && requestedLevels >= 0
+      ? requestedLevels
       : null;
+  })();
   const hierarchyDepthPolicy = visuals?.hierarchy?.depthPolicy ?? null;
   const hierarchyDepthStopReason = visuals?.hierarchy?.depthStopReason ?? null;
   const hierarchyWhyNotDeeper = visuals?.hierarchy?.whyNotDeeper ?? null;
@@ -808,33 +809,38 @@ export function RunVisualSummary({
                       });
 
                       // When only 1 top-level cluster, auto-expand to show its children
-                      const displayItems =
-                        topLevel.length === 1
-                          ? (() => {
-                              const singleRoot = topLevel[0];
-                              const childIds =
-                                childIdsByParent.get(singleRoot.id) ?? [];
-                              const children = childIds
-                                .map((id) => nodeById.get(id))
-                                .filter((n): n is NonNullable<typeof n> => !!n)
-                                .sort((a, b) => b.size - a.size)
-                                .slice(0, 6)
-                                .map((child) => ({
-                                  id: child.id,
-                                  name: child.name,
-                                  description: child.description,
-                                  childCount:
-                                    childIdsByParent.get(child.id)?.length ?? 0,
-                                }));
-                              return children.length > 0
-                                ? children
-                                : topLevel.slice(0, 4);
-                            })()
+                      const displayItems = (() => {
+                        if (topLevel.length !== 1) {
+                          return topLevel.slice(0, 4);
+                        }
+
+                        const singleRoot = topLevel[0];
+                        const childIds =
+                          childIdsByParent.get(singleRoot.id) ?? [];
+                        const children = childIds
+                          .map((id) => nodeById.get(id))
+                          .filter((n): n is NonNullable<typeof n> => !!n)
+                          .sort((a, b) => b.size - a.size)
+                          .slice(0, 6)
+                          .map((child) => ({
+                            id: child.id,
+                            name: child.name,
+                            description: child.description,
+                            childCount:
+                              childIdsByParent.get(child.id)?.length ?? 0,
+                          }));
+
+                        return children.length > 0
+                          ? children
                           : topLevel.slice(0, 4);
+                      })();
 
                       return (
                         <div
-                          className={`grid gap-2 ${displayItems.length >= 2 ? "md:grid-cols-2" : ""}`}
+                          className={cn(
+                            "grid gap-2",
+                            displayItems.length >= 2 && "md:grid-cols-2",
+                          )}
                         >
                           {displayItems.map((item) => {
                             const nodeSize = nodeById.get(item.id)?.size ?? 0;
@@ -1334,13 +1340,12 @@ export function RunVisualSummary({
                                   });
                                 }
                               }}
-                              className={`grid w-full grid-cols-[1fr_84px_84px_160px] items-center gap-3 px-6 py-3 text-left text-[15px] transition-colors hover:bg-muted/40 ${
-                                isSelected
-                                  ? "border-l-2 border-l-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/20"
-                                  : isMatch
-                                    ? "bg-primary/5"
-                                    : ""
-                              }`}
+                              className={cn(
+                                "grid w-full grid-cols-[1fr_84px_84px_160px] items-center gap-3 px-6 py-3 text-left text-[15px] transition-colors hover:bg-muted/40",
+                                isSelected &&
+                                  "border-l-2 border-l-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/20",
+                                !isSelected && isMatch && "bg-primary/5",
+                              )}
                               style={{
                                 paddingLeft: `${1.5 + row.depth * 1.75}rem`,
                               }}
@@ -1375,11 +1380,7 @@ export function RunVisualSummary({
                                 <span
                                   className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${levelPillClass(row.node.level)}`}
                                 >
-                                  {row.node.level <= 0
-                                    ? "Leaf"
-                                    : row.node.level === 1
-                                      ? "Group"
-                                      : "Root"}
+                                  {getLevelLabel(row.node.level)}
                                 </span>
                               </div>
                               {/* Distribution bar with share % */}
@@ -1454,7 +1455,16 @@ export function RunVisualSummary({
                               const shown = filteredLeafRecords.length;
                               const isFiltered =
                                 total !== null && shown < total;
-                              return isFiltered ? (
+
+                              if (!isFiltered) {
+                                return (
+                                  <Badge variant="outline" className="text-xs">
+                                    {total ?? "..."} conversations
+                                  </Badge>
+                                );
+                              }
+
+                              return (
                                 <>
                                   <Badge variant="outline" className="text-xs">
                                     {total} conversations
@@ -1463,10 +1473,6 @@ export function RunVisualSummary({
                                     shown {shown}
                                   </Badge>
                                 </>
-                              ) : (
-                                <Badge variant="outline" className="text-xs">
-                                  {total ?? "..."} conversations
-                                </Badge>
                               );
                             })()}
                             <Badge variant="outline" className="text-xs">

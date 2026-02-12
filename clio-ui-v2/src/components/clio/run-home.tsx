@@ -26,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import type { RunListResponse, RunState } from "@/lib/clio-types";
+import { formatRelativeTime } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 
 const RUN_LIST_REFRESH_INTERVAL_MS = 30000;
@@ -59,32 +60,6 @@ const RUN_STATE_CARD_CLASS: Record<RunState, string> = {
   partial:
     "border-violet-300/70 bg-violet-100/45 dark:border-violet-900/60 dark:bg-violet-950/20",
 };
-
-function formatRelativeTime(value: string): string {
-  if (!value) {
-    return "n/a";
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return "n/a";
-  }
-  const diffSeconds = Math.round((timestamp - Date.now()) / 1000);
-  const absDiff = Math.abs(diffSeconds);
-  const formatter = new Intl.RelativeTimeFormat(undefined, {
-    numeric: "auto",
-  });
-
-  if (absDiff < 60) {
-    return formatter.format(diffSeconds, "second");
-  }
-  if (absDiff < 3_600) {
-    return formatter.format(Math.round(diffSeconds / 60), "minute");
-  }
-  if (absDiff < 86_400) {
-    return formatter.format(Math.round(diffSeconds / 3_600), "hour");
-  }
-  return formatter.format(Math.round(diffSeconds / 86_400), "day");
-}
 
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal });
@@ -156,34 +131,29 @@ export function RunHome() {
 
   const runSnapshot = useMemo(() => {
     if (!runsData) {
-      return {
-        total: 0,
-        running: 0,
-        completed: 0,
-        failed: 0,
-      };
+      return { total: 0, running: 0, completed: 0, failed: 0 };
     }
+
     return runsData.runs.reduce(
       (acc, run) => {
         acc.total += 1;
-        if (run.state === "running") {
-          acc.running += 1;
-        } else if (
-          run.state === "completed" ||
-          run.state === "completed_with_warnings"
-        ) {
-          acc.completed += 1;
-        } else if (run.state === "failed") {
-          acc.failed += 1;
+
+        switch (run.state) {
+          case "running":
+            acc.running += 1;
+            break;
+          case "completed":
+          case "completed_with_warnings":
+            acc.completed += 1;
+            break;
+          case "failed":
+            acc.failed += 1;
+            break;
         }
+
         return acc;
       },
-      {
-        total: 0,
-        running: 0,
-        completed: 0,
-        failed: 0,
-      },
+      { total: 0, running: 0, completed: 0, failed: 0 },
     );
   }, [runsData]);
 

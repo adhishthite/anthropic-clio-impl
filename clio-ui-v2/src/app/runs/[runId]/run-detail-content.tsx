@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,32 +12,42 @@ type RunDetailContentProps = {
   runId: string;
 };
 
+const MAX_INIT_RETRIES = 5;
+const RETRY_DELAY_MS = 2000;
+
+type RunCheckStatus = "checking" | "initializing" | "ready" | "not_found";
+
 export function RunDetailContent({ runId }: RunDetailContentProps) {
-  const [notFound, setNotFound] = useState(false);
-  const [checking, setChecking] = useState(true);
+  const [status, setStatus] = useState<RunCheckStatus>("checking");
 
   const checkRunExists = useCallback(
     async (signal?: AbortSignal) => {
-      try {
-        const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`, {
-          cache: "no-store",
-          signal,
-        });
-        if (!response.ok) {
-          setNotFound(true);
-        } else {
-          setNotFound(false);
+      for (let attempt = 0; attempt <= MAX_INIT_RETRIES; attempt++) {
+        if (signal?.aborted) return;
+
+        try {
+          const response = await fetch(
+            `/api/runs/${encodeURIComponent(runId)}`,
+            { cache: "no-store", signal },
+          );
+          if (response.ok) {
+            setStatus("ready");
+            return;
+          }
+        } catch {
+          if (signal?.aborted) return;
         }
-      } catch {
-        if (signal?.aborted) {
-          return;
+
+        if (attempt === 0) {
+          setStatus("initializing");
         }
-        setNotFound(true);
-      } finally {
-        if (!signal?.aborted) {
-          setChecking(false);
+
+        if (attempt < MAX_INIT_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
         }
       }
+
+      setStatus("not_found");
     },
     [runId],
   );
@@ -50,11 +60,28 @@ export function RunDetailContent({ runId }: RunDetailContentProps) {
     };
   }, [checkRunExists]);
 
-  if (checking) {
+  if (status === "checking") {
     return null;
   }
 
-  if (notFound) {
+  if (status === "initializing") {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16">
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <Loader2 className="size-5 animate-spin" />
+          <p className="text-sm">
+            Waiting for run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+              {runId}
+            </code>{" "}
+            to initialize...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "not_found") {
     return (
       <div className="mx-auto max-w-xl px-4 py-16">
         <Alert variant="destructive">

@@ -18,6 +18,7 @@ import type {
   SseConnectionEvent,
   SseStreamHealth,
 } from "@/hooks/use-sse-stream";
+import { formatDateTime } from "@/lib/format-utils";
 
 type StreamTimelineDrawerProps = {
   title: string;
@@ -28,29 +29,6 @@ type StreamTimelineDrawerProps = {
     health: SseStreamHealth;
   }>;
 };
-
-function formatDateTime(
-  value: string,
-  options?: { localize?: boolean },
-): string {
-  if (!value) {
-    return "n/a";
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  if (!options?.localize) {
-    return new Date(timestamp)
-      .toISOString()
-      .replace("T", " ")
-      .replace("Z", " UTC");
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  }).format(new Date(timestamp));
-}
 
 function eventBadgeVariant(eventType: SseConnectionEvent["type"]) {
   if (eventType === "connected") {

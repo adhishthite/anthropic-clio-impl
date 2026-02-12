@@ -30,11 +30,18 @@ export async function GET(
     Number.isFinite(linesParam) && linesParam > 0
       ? Math.floor(linesParam)
       : 120;
+  const offsetRaw = url.searchParams.get("offset");
+  const offsetParam = offsetRaw != null ? Number(offsetRaw) : null;
+  const offset =
+    offsetParam != null && Number.isFinite(offsetParam) && offsetParam >= 0
+      ? Math.floor(offsetParam)
+      : undefined;
   const runsRoot = getRunsRootPath();
 
   const payload = await readRunJobLogTail({
     runId: decodeURIComponent(runId),
     lines,
+    offset,
     runsRoot,
   });
   return withNoStoreHeaders({

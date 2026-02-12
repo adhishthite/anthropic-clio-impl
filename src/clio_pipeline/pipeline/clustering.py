@@ -93,7 +93,7 @@ def resolve_base_cluster_target(
     auto_target = ceil(sample_count / target_leaf_size)
     bounded_target = max(min_leaf_clusters, min(max_leaf_clusters, auto_target))
     return BaseClusterTarget(
-        requested_k=max(1, min(sample_count, bounded_target)),
+        requested_k=min(sample_count, max(1, bounded_target)),
         leaf_mode=normalized_leaf_mode,
         auto_target_k=bounded_target,
     )
@@ -183,9 +183,8 @@ def _assign_noise_singleton(labels: np.ndarray) -> np.ndarray:
 
     existing = [int(label) for label in assigned.tolist() if int(label) >= 0]
     next_label = (max(existing) + 1) if existing else 0
-    for noise_index in noise_indexes:
-        assigned[int(noise_index)] = next_label
-        next_label += 1
+    for i, noise_index in enumerate(noise_indexes):
+        assigned[noise_index] = next_label + i
     return assigned
 
 
@@ -196,9 +195,8 @@ def _assign_noise_drop_bucket(labels: np.ndarray) -> np.ndarray:
     noise_mask = assigned < 0
     if not np.any(noise_mask):
         return assigned
-    existing = [int(label) for label in assigned.tolist() if int(label) >= 0]
-    drop_bucket_label = (max(existing) + 1) if existing else 0
-    assigned[noise_mask] = drop_bucket_label
+    existing = [int(label) for label in assigned[~noise_mask].tolist()]
+    assigned[noise_mask] = (max(existing) + 1) if existing else 0
     return assigned
 
 
@@ -242,13 +240,11 @@ def _refine_cluster_count_hybrid(
 
     while len({int(label) for label in refined.tolist()}) < target_k:
         unique = sorted({int(label) for label in refined.tolist()})
-        candidate_label = -1
-        candidate_size = 0
+        candidate_label, candidate_size = -1, 0
         for label in unique:
             size = int(np.count_nonzero(refined == label))
             if size > candidate_size:
-                candidate_label = label
-                candidate_size = size
+                candidate_label, candidate_size = label, size
 
         if candidate_label < 0 or candidate_size < 2:
             break
@@ -287,28 +283,23 @@ def _safe_clustering_scores(
     if unique_count <= 1 or sample_count <= unique_count:
         return None, None, None
 
-    silhouette_value: float | None = None
-    davies_bouldin_value: float | None = None
-    calinski_harabasz_value: float | None = None
-    try:
-        silhouette_value = float(
-            silhouette_score(
-                embeddings,
-                labels,
-                sample_size=min(sample_count, 2000),
-                random_state=random_seed,
-            )
-        )
-    except Exception:
-        silhouette_value = None
-    try:
-        davies_bouldin_value = float(davies_bouldin_score(embeddings, labels))
-    except Exception:
-        davies_bouldin_value = None
-    try:
-        calinski_harabasz_value = float(calinski_harabasz_score(embeddings, labels))
-    except Exception:
-        calinski_harabasz_value = None
+    def _try_compute_metric(metric_fn, **kwargs):
+        try:
+            return float(metric_fn(**kwargs))
+        except Exception:
+            return None
+
+    silhouette_value = _try_compute_metric(
+        silhouette_score,
+        X=embeddings,
+        labels=labels,
+        sample_size=min(sample_count, 2000),
+        random_state=random_seed,
+    )
+    davies_bouldin_value = _try_compute_metric(davies_bouldin_score, X=embeddings, labels=labels)
+    calinski_harabasz_value = _try_compute_metric(
+        calinski_harabasz_score, X=embeddings, labels=labels
+    )
     return silhouette_value, davies_bouldin_value, calinski_harabasz_value
 
 

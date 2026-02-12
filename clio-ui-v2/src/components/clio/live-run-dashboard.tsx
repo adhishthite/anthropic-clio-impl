@@ -94,6 +94,11 @@ import type {
   RunTerminateResponse,
   RunVisualsResponse,
 } from "@/lib/clio-types";
+import {
+  formatCompactNumber,
+  formatDateTime,
+  formatRelativeTime,
+} from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 
 type StreamErrorPayload = {
@@ -298,64 +303,7 @@ const ARTIFACT_GROUPS: { label: string; keys: string[] }[] = [
 
 type StatCardTone = "neutral" | "success" | "alert" | "info";
 
-function formatDateTime(
-  value: string,
-  options?: { localize?: boolean },
-): string {
-  if (!value) {
-    return "n/a";
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  if (!options?.localize) {
-    return new Date(timestamp)
-      .toISOString()
-      .replace("T", " ")
-      .replace("Z", " UTC");
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(timestamp));
-}
-
-function formatRelativeTime(value: string, nowMs: number | null): string {
-  if (!value) {
-    return "n/a";
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return "n/a";
-  }
-  if (nowMs === null) {
-    return "recently";
-  }
-  const diffSeconds = Math.round((timestamp - nowMs) / 1000);
-  const absDiff = Math.abs(diffSeconds);
-  const formatter = new Intl.RelativeTimeFormat(undefined, {
-    numeric: "auto",
-  });
-
-  if (absDiff < 60) {
-    return formatter.format(diffSeconds, "second");
-  }
-  if (absDiff < 3_600) {
-    return formatter.format(Math.round(diffSeconds / 60), "minute");
-  }
-  if (absDiff < 86_400) {
-    return formatter.format(Math.round(diffSeconds / 3_600), "hour");
-  }
-  return formatter.format(Math.round(diffSeconds / 86_400), "day");
-}
-
-function formatCompactNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
+// Deleted duplicate formatting functions - now using shared utilities from lib/format-utils.ts
 
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { cache: "no-store", signal });
@@ -1059,15 +1007,24 @@ export function LiveRunDashboard({
       <div className="clio-orb top-20 right-0 h-64 w-64 bg-accent/20 [animation-delay:2s]" />
 
       <main className="mx-auto flex w-full max-w-[2280px] flex-col gap-5 px-3 py-5 md:px-6 md:py-8 2xl:px-8">
-        <section className="clio-shell relative px-5 py-5 md:px-7 md:py-6">
+        <section className="clio-shell sticky top-0 z-20 relative px-5 py-4 md:px-7 md:py-5">
           <div className="clio-grid-pattern pointer-events-none absolute inset-0 opacity-35" />
-          <div className="relative grid gap-5 xl:grid-cols-[1.45fr_0.8fr] 2xl:grid-cols-[1.7fr_0.8fr]">
-            <div className="space-y-3">
+          <div className="relative grid gap-5 xl:grid-cols-[1.2fr_1fr] 2xl:grid-cols-[1.3fr_1fr] xl:items-center">
+            <div className="space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary" className="gap-1">
                   <Sparkles className="size-3.5" />
                   CLIO run detail
                 </Badge>
+                {detailData ? (
+                  <Badge
+                    variant={RUN_STATE_META[detailData.run.state].badgeVariant}
+                    className="gap-1"
+                  >
+                    {stateIcon(detailData.run.state)}
+                    {RUN_STATE_META[detailData.run.state].label}
+                  </Badge>
+                ) : null}
                 <Badge variant="outline" className="gap-1">
                   <Clock3 className="size-3.5" />
                   {runsData?.generatedAtUtc
@@ -1076,40 +1033,77 @@ export function LiveRunDashboard({
                 </Badge>
               </div>
 
-              <h1 className="clio-display text-3xl leading-tight md:text-4xl">
+              <h1 className="clio-display text-2xl leading-tight md:text-3xl">
                 Run detail
               </h1>
+              {lockedRunId ? (
+                <p className="font-mono text-lg font-semibold text-foreground/80 md:text-xl">
+                  {lockedRunId}
+                </p>
+              ) : null}
             </div>
 
-            <div className="clio-panel relative overflow-hidden p-4 md:p-5">
-              <p className="clio-kicker">Run context</p>
-              <div className="mt-3 space-y-3 text-sm">
-                <div className="clio-panel-subtle px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Runs root</p>
-                  <code className="mt-1 block truncate text-[12px]">
-                    {runsData?.runsRoot ?? "(discovering...)"}
-                  </code>
+            {detailData ? (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="clio-panel-subtle rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Progress</p>
+                  <p className="mt-0.5 text-lg font-bold">
+                    {detailData.run.overallProgressPercent.toFixed(0)}%
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {detailData.summary.completedPhases}/
+                    {detailData.summary.totalPhases} phases
+                  </p>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="clio-panel-subtle px-3 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      Indexed runs
-                    </p>
-                    <p className="mt-1 text-xl font-semibold">
-                      {runsData ? runsData.runs.length : "-"}
-                    </p>
-                  </div>
-                  <div className="clio-panel-subtle px-3 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      Auto refresh
-                    </p>
-                    <p className="mt-1 text-xl font-semibold">
-                      {autoRefresh ? "ON" : "OFF"}
-                    </p>
-                  </div>
+                <div className="clio-panel-subtle rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Conversations
+                  </p>
+                  <p className="mt-0.5 text-lg font-bold">
+                    {formatCompactNumber(detailData.run.conversationCountInput)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {formatCompactNumber(
+                      detailData.run.conversationCountProcessed,
+                    )}{" "}
+                    processed
+                  </p>
+                </div>
+                <div className="clio-panel-subtle rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Clusters</p>
+                  <p className="mt-0.5 text-lg font-bold">
+                    {detailData.run.clusterCountTotal > 0
+                      ? formatCompactNumber(detailData.run.clusterCountTotal)
+                      : "-"}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {detailData.summary.warningCount > 0
+                      ? `${detailData.summary.warningCount} warning${detailData.summary.warningCount === 1 ? "" : "s"}`
+                      : "No warnings"}
+                  </p>
+                </div>
+                <div className="clio-panel-subtle rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    Current phase
+                  </p>
+                  <p className="mt-0.5 truncate text-sm font-semibold">
+                    {phaseLabelFromTimeline(detailData, detailData.run.phase)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {formatRelativeTime(
+                      detailData.run.updatedAtUtc,
+                      relativeNowMs,
+                    )}
+                  </p>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-[72px] rounded-lg" />
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
@@ -1527,21 +1521,21 @@ export function LiveRunDashboard({
                               <p className="truncate font-medium">
                                 {stageMeta.shortLabel}
                               </p>
-                              {!isSkipped ? (
+                              {!isSkipped && (
                                 <HelpTooltip content={stageMeta.description} />
-                              ) : null}
+                              )}
                             </div>
-                            {!isSkipped ? (
+                            {!isSkipped && (
                               <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                                 {item.note || stageMeta.description}
                               </p>
-                            ) : null}
+                            )}
                           </div>
                           <Badge variant={statusMeta.badgeVariant}>
                             {statusMeta.label}
                           </Badge>
                         </div>
-                        {!isSkipped ? (
+                        {!isSkipped && (
                           <Progress
                             className="mt-2"
                             value={
@@ -1551,7 +1545,7 @@ export function LiveRunDashboard({
                                 : (item.percent ?? 0)
                             }
                           />
-                        ) : null}
+                        )}
                       </div>
                     );
                   })}
@@ -1559,15 +1553,15 @@ export function LiveRunDashboard({
               </CardContent>
             </Card>
 
-            {detailError ? (
+            {detailError && (
               <Alert variant="destructive">
                 <AlertTriangle />
                 <AlertTitle>Could not refresh run details</AlertTitle>
                 <AlertDescription>{detailError}</AlertDescription>
               </Alert>
-            ) : null}
+            )}
 
-            {detailData.run.state === "partial" ? (
+            {detailData.run.state === "partial" && (
               <Alert>
                 <AlertTriangle />
                 <AlertTitle>Run ended before finalization</AlertTitle>
@@ -1576,7 +1570,7 @@ export function LiveRunDashboard({
                   early or exited before writing completion metadata.
                 </AlertDescription>
               </Alert>
-            ) : null}
+            )}
 
             <div className="grid gap-4 xl:grid-cols-[1.35fr_0.95fr] 2xl:grid-cols-[1.5fr_1fr]">
               <Card className="clio-shell border-border/70">
@@ -1589,9 +1583,9 @@ export function LiveRunDashboard({
                 <CardContent className="space-y-4">
                   {detailData.phaseTimeline.map((item, index) => (
                     <div key={item.phase} className="relative pl-7">
-                      {index < detailData.phaseTimeline.length - 1 ? (
+                      {index < detailData.phaseTimeline.length - 1 && (
                         <span className="absolute left-[0.53rem] top-5 h-[calc(100%-0.35rem)] w-px bg-border/90" />
-                      ) : null}
+                      )}
 
                       <span className="absolute top-0 left-0">
                         {phaseIcon(item.status)}

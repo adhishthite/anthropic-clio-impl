@@ -196,9 +196,9 @@ def _llm_metrics_snapshot(llm_client: LLMJsonClient) -> dict:
         return {}
     try:
         snapshot = snapshot_fn()
+        return snapshot if isinstance(snapshot, dict) else {}
     except Exception:
         return {}
-    return snapshot if isinstance(snapshot, dict) else {}
 
 
 def _serialize_messages_only(conversation: Conversation) -> dict:
@@ -457,9 +457,9 @@ def _load_json_dict(path: Path) -> dict:
         return {}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def load_phase2_facets(run_root: Path) -> list[Facets]:

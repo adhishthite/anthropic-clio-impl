@@ -275,5 +275,6 @@ export type RunLogResponse = {
   running: boolean;
   logPath: string;
   lineCount: number;
+  totalLineCount: number;
   logTail: string;
 };

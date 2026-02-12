@@ -60,6 +60,7 @@ import type {
   RunLogResponse,
   RunTerminateResponse,
 } from "@/lib/clio-types";
+import { formatDateTime } from "@/lib/format-utils";
 import { cn } from "@/lib/utils";
 
 type RunOrchestrationPanelProps = {
@@ -248,20 +249,6 @@ function streamHint(health: SseStreamHealth): string {
   return "waiting for stream data";
 }
 
-function formatDateTime(value: string): string {
-  if (!value) {
-    return "n/a";
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(timestamp));
-}
-
 const JOB_STATUS_COLOR: Record<RunJobRecord["status"], string> = {
   running:
     "border-blue-300/70 bg-blue-100/45 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-300",
@@ -368,6 +355,8 @@ export function RunOrchestrationPanel({
   const [logData, setLogData] = useState<RunLogResponse | null>(null);
   const [logError, setLogError] = useState<string>("");
   const [logLoading, setLogLoading] = useState<boolean>(false);
+  const [logOffsetInput, setLogOffsetInput] = useState<string>("");
+  const logOffsetActiveRef = useRef(false);
 
   const setBooleanOption = useCallback(
     (key: BooleanOptionKey, checked: boolean) => {
@@ -416,6 +405,10 @@ export function RunOrchestrationPanel({
     }
   }, []);
 
+  useEffect(() => {
+    logOffsetActiveRef.current = Boolean(logOffsetInput);
+  }, [logOffsetInput]);
+
   const loadLogTail = useCallback(
     async (signal?: AbortSignal) => {
       if (!selectedLogRunId) {
@@ -426,8 +419,15 @@ export function RunOrchestrationPanel({
 
       setLogLoading(true);
       try {
+        const params = new URLSearchParams({ lines: "180" });
+        if (logOffsetInput) {
+          const offset = Number(logOffsetInput);
+          if (Number.isFinite(offset) && offset >= 0) {
+            params.set("offset", String(Math.floor(offset)));
+          }
+        }
         const payload = await fetchJson<RunLogResponse>(
-          `/api/runs/jobs/${encodeURIComponent(selectedLogRunId)}/logs?lines=180`,
+          `/api/runs/jobs/${encodeURIComponent(selectedLogRunId)}/logs?${params.toString()}`,
           signal,
         );
         setLogData(payload);
@@ -445,7 +445,7 @@ export function RunOrchestrationPanel({
         }
       }
     },
-    [selectedLogRunId],
+    [selectedLogRunId, logOffsetInput],
   );
 
   useEffect(() => {
@@ -482,9 +482,11 @@ export function RunOrchestrationPanel({
       }
       return payload.jobs[0]?.runId ?? "";
     });
-    setLogData(payload.logData);
-    setLogError("");
-    setLogLoading(false);
+    if (!logOffsetActiveRef.current) {
+      setLogData(payload.logData);
+      setLogError("");
+      setLogLoading(false);
+    }
   }, []);
 
   const handleJobsStreamError = useCallback((event: MessageEvent<string>) => {
@@ -1149,7 +1151,7 @@ export function RunOrchestrationPanel({
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+      <div className="grid min-h-[500px] gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <Card className="clio-panel border-border/70">
           <CardHeader>
             <CardTitle className="text-lg">Background jobs</CardTitle>
@@ -1183,26 +1185,26 @@ export function RunOrchestrationPanel({
             ) : null}
           </CardHeader>
           <CardContent className="space-y-3">
-            {jobsError ? (
+            {jobsError && (
               <Alert variant="destructive">
                 <AlertTriangle />
                 <AlertTitle>Could not load jobs</AlertTitle>
                 <AlertDescription>{jobsError}</AlertDescription>
               </Alert>
-            ) : null}
+            )}
 
-            {jobsLoading && !jobsData ? (
+            {jobsLoading && !jobsData && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 Loading jobs...
               </div>
-            ) : null}
+            )}
 
-            {!jobsLoading && jobsData && jobsData.jobs.length === 0 ? (
+            {!jobsLoading && jobsData && jobsData.jobs.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 No UI-launched jobs yet.
               </p>
-            ) : null}
+            )}
 
             <div className="space-y-2">
               {jobsData?.jobs.map((job) => (
@@ -1262,7 +1264,7 @@ export function RunOrchestrationPanel({
           </CardContent>
         </Card>
 
-        <Card className="clio-panel border-border/70">
+        <Card className="clio-panel flex flex-col border-border/70">
           <CardHeader>
             <CardTitle className="text-lg">Live log tail</CardTitle>
             <CardDescription>
@@ -1275,24 +1277,47 @@ export function RunOrchestrationPanel({
                 : "none"}
             </p>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="run-log-selector">Run</Label>
-              <Select
-                value={selectedLogRunId}
-                onValueChange={setSelectedLogRunId}
-              >
-                <SelectTrigger id="run-log-selector">
-                  <SelectValue placeholder="Select run log" />
-                </SelectTrigger>
-                <SelectContent>
-                  {jobsData?.jobs.map((job) => (
-                    <SelectItem key={job.runId} value={job.runId}>
-                      {job.runId} · {statusLabel(job.status)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+            <div className="flex items-end gap-3">
+              <div className="min-w-0 flex-1 space-y-2">
+                <Label htmlFor="run-log-selector">Run</Label>
+                <Select
+                  value={selectedLogRunId}
+                  onValueChange={setSelectedLogRunId}
+                >
+                  <SelectTrigger id="run-log-selector">
+                    <SelectValue placeholder="Select run log" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {jobsData?.jobs.map((job) => (
+                      <SelectItem key={job.runId} value={job.runId}>
+                        {job.runId} · {statusLabel(job.status)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-28 space-y-2">
+                <Label htmlFor="log-offset">Start line</Label>
+                <Input
+                  id="log-offset"
+                  type="number"
+                  min={0}
+                  placeholder="tail"
+                  value={logOffsetInput}
+                  onChange={(e) => setLogOffsetInput(e.target.value)}
+                />
+              </div>
+              {logOffsetInput ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 text-xs"
+                  onClick={() => setLogOffsetInput("")}
+                >
+                  Jump to end
+                </Button>
+              ) : null}
             </div>
 
             {logError ? (
@@ -1310,8 +1335,8 @@ export function RunOrchestrationPanel({
               </div>
             ) : null}
 
-            <div className="rounded-xl border border-border/70 bg-muted/20 p-2">
-              <div className="max-h-[400px] overflow-y-auto">
+            <div className="min-h-0 flex-1 rounded-xl border border-border/70 bg-muted/20 p-2">
+              <div className="h-full overflow-y-auto">
                 <pre className="whitespace-pre-wrap break-words p-2 text-xs leading-5">
                   {logData?.logTail || "No logs yet for this run."}
                 </pre>
@@ -1321,7 +1346,10 @@ export function RunOrchestrationPanel({
             {logData ? (
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  {logData.lineCount} lines · {logData.status} ·{" "}
+                  {logOffsetInput
+                    ? `Lines ${Number(logOffsetInput)}-${Number(logOffsetInput) + logData.lineCount} of ${logData.totalLineCount}`
+                    : `${logData.lineCount} lines (tail)`}{" "}
+                  · {logData.totalLineCount} total · {logData.status} ·{" "}
                   {logData.logPath}
                 </p>
                 <Button

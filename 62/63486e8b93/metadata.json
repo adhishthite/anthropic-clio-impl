@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "6263486e8b93",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/clio_pipeline/pipeline/embedding.py",
+    "src/clio_pipeline/pipeline/run_pipeline.py",
+    "tests/test_embedding.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/62/63486e8b93/0/metadata.json",
+      "transcript": "/62/63486e8b93/0/full.jsonl",
+      "context": "/62/63486e8b93/0/context.md",
+      "content_hash": "/62/63486e8b93/0/content_hash.txt",
+      "prompt": "/62/63486e8b93/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 55,
+    "cache_creation_tokens": 33449,
+    "cache_read_tokens": 4704569,
+    "output_tokens": 8736,
+    "api_call_count": 41
+  }
+}

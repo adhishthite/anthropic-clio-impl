@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "edf35600152c",
+  "session_id": "0280ad20-e7c6-45cf-98e4-3e2766d16438",
+  "strategy": "manual-commit",
+  "created_at": "2026-02-12T18:09:48.816549Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "scripts/promote_partial_phase2.py"
+  ],
+  "agent": "Claude Code",
+  "transcript_identifier_at_start": "37759ea1-be3d-4e81-969c-c4c7f8eee8c1",
+  "checkpoint_transcript_start": 471,
+  "transcript_lines_at_start": 471,
+  "token_usage": {
+    "input_tokens": 31,
+    "cache_creation_tokens": 13358,
+    "cache_read_tokens": 2018545,
+    "output_tokens": 2675,
+    "api_call_count": 21
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-02-12T18:09:48.769758Z",
+    "agent_lines": 20,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 20,
+    "agent_percentage": 100
+  }
+}

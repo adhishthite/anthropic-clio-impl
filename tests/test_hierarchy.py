@@ -68,7 +68,7 @@ def test_build_multilevel_hierarchy_parallel_labeling():
         labeled_clusters=labeled_clusters,
         leaf_embeddings=leaf_embeddings,
         llm_client=_FakeHierarchyClient(),
-        max_levels=3,
+        requested_levels=3,
         target_group_size=2,
         random_seed=7,
         max_label_concurrency=4,
@@ -77,4 +77,7 @@ def test_build_multilevel_hierarchy_parallel_labeling():
     assert hierarchy["leaf_cluster_count"] == len(labeled_clusters)
     assert hierarchy["top_level_cluster_count"] >= 1
     assert hierarchy["max_level"] >= 1
+    assert hierarchy["requested_levels"] == 3
+    assert hierarchy["generated_levels"] >= 2
+    assert hierarchy["depth_policy"] == "adaptive"
     assert len(hierarchy["nodes"]) >= len(labeled_clusters)

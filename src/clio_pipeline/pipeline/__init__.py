@@ -1,6 +1,11 @@
 """Pipeline stage implementations."""
 
-from clio_pipeline.pipeline.clustering import ClusteringError, fit_base_kmeans
+from clio_pipeline.pipeline.clustering import (
+    ClusteringError,
+    fit_base_clusters,
+    fit_base_kmeans,
+    resolve_base_cluster_target,
+)
 from clio_pipeline.pipeline.embedding import EmbeddingExtractionError, embed_texts_in_batches
 from clio_pipeline.pipeline.evaluate import (
     build_evaluation_markdown_report,
@@ -58,6 +63,7 @@ __all__ = [
     "embed_texts_in_batches",
     "extract_conversation_facets",
     "extract_facets_batch",
+    "fit_base_clusters",
     "fit_base_kmeans",
     "fit_hierarchy_groups",
     "generate_run_id",
@@ -70,6 +76,7 @@ __all__ = [
     "load_phase4_labeled_clusters",
     "load_phase5_outputs",
     "load_phase6_evaluation",
+    "resolve_base_cluster_target",
     "run_phase1_dataset_load",
     "run_phase1_dataset_load_streaming",
     "run_phase2_facet_extraction",

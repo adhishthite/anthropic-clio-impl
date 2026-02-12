@@ -37,6 +37,7 @@ from clio_pipeline.pipeline import (
     load_phase4_labeled_clusters,
     load_phase5_outputs,
     load_phase6_evaluation,
+    resolve_base_cluster_target,
     run_phase1_dataset_load,
     run_phase2_facet_extraction,
     run_phase2_facet_extraction_streaming,
@@ -270,6 +271,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run Phase 3 embeddings and base k-means clustering (implies --with-facets).",
     )
     run_parser.add_argument(
+        "--cluster-strategy",
+        choices=["kmeans", "hdbscan", "hybrid"],
+        default=None,
+        help="Override clustering strategy for this run only.",
+    )
+    run_parser.add_argument(
+        "--cluster-leaf-mode",
+        choices=["fixed", "auto"],
+        default=None,
+        help="Override leaf target mode: fixed k or auto-sized by dataset volume.",
+    )
+    run_parser.add_argument(
+        "--cluster-target-leaf-size",
+        type=int,
+        default=None,
+        help="Auto leaf mode target conversations per leaf cluster.",
+    )
+    run_parser.add_argument(
+        "--cluster-min-leaf-clusters",
+        type=int,
+        default=None,
+        help="Auto leaf mode lower bound for leaf cluster count.",
+    )
+    run_parser.add_argument(
+        "--cluster-max-leaf-clusters",
+        type=int,
+        default=None,
+        help="Auto leaf mode upper bound for leaf cluster count.",
+    )
+    run_parser.add_argument(
+        "--cluster-hdbscan-min-cluster-size",
+        type=int,
+        default=None,
+        help="HDBSCAN min_cluster_size for cluster-strategy hdbscan/hybrid.",
+    )
+    run_parser.add_argument(
+        "--cluster-hdbscan-min-samples",
+        type=int,
+        default=None,
+        help="HDBSCAN min_samples for cluster-strategy hdbscan/hybrid.",
+    )
+    run_parser.add_argument(
+        "--cluster-noise-policy",
+        choices=["nearest", "singleton", "drop"],
+        default=None,
+        help="Policy for HDBSCAN noise points.",
+    )
+    run_parser.add_argument(
         "--with-labeling",
         action="store_true",
         help="Run Phase 4 cluster labeling (implies --with-clustering).",
@@ -284,6 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=("Override hierarchy depth for this run only. Values are clamped to range [2, 20]."),
+    )
+    run_parser.add_argument(
+        "--hierarchy-depth-policy",
+        choices=["adaptive", "strict_min"],
+        default=None,
+        help="Override hierarchy depth policy for this run only.",
     )
     run_parser.add_argument(
         "--with-privacy",
@@ -442,8 +497,20 @@ def cmd_info(settings: Settings) -> None:
     print(f"  Facet concurrency: {settings.facet_max_concurrency}")
     print(f"  Label sample size: {settings.cluster_label_sample_size}")
     print(f"  Label concurrency: {settings.cluster_label_max_concurrency}")
+    print(f"  Clustering strategy: {settings.clustering_strategy}")
+    print(f"  Cluster leaf mode: {settings.clustering_leaf_mode}")
+    print(f"  Target leaf size: {settings.clustering_target_leaf_size}")
+    print(f"  Min leaf clusters: {settings.clustering_min_leaf_clusters}")
+    print(f"  Max leaf clusters: {settings.clustering_max_leaf_clusters}")
+    print(
+        "  HDBSCAN min cluster/sample: "
+        f"{settings.clustering_hdbscan_min_cluster_size}/"
+        f"{settings.clustering_hdbscan_min_samples}"
+    )
+    print(f"  HDBSCAN noise policy: {settings.clustering_noise_policy}")
     print(f"  Hierarchy top-k:  {settings.hierarchy_top_k}")
     print(f"  Hierarchy levels: {settings.hierarchy_levels}")
+    print(f"  Hierarchy depth policy: {settings.hierarchy_depth_policy}")
     print(f"  Target group size: {settings.hierarchy_target_group_size}")
     print(f"  Hierarchy label concurrency: {settings.hierarchy_label_max_concurrency}")
     print(f"  Viz projection:   {settings.viz_projection_method}")
@@ -507,7 +574,18 @@ def _estimate_run_preflight(
 ) -> dict[str, float | int | None]:
     """Build a rough run-level preflight estimate for cost and runtime."""
 
-    cluster_estimate = max(1, min(settings.k_base_clusters, max(1, conversation_count)))
+    try:
+        cluster_target = resolve_base_cluster_target(
+            sample_count=max(1, conversation_count),
+            requested_k=settings.k_base_clusters,
+            leaf_mode=settings.clustering_leaf_mode,
+            target_leaf_size=settings.clustering_target_leaf_size,
+            min_leaf_clusters=settings.clustering_min_leaf_clusters,
+            max_leaf_clusters=settings.clustering_max_leaf_clusters,
+        )
+        cluster_estimate = cluster_target.requested_k
+    except Exception:
+        cluster_estimate = max(1, min(settings.k_base_clusters, max(1, conversation_count)))
     facet_requests = conversation_count if run_facets else 0
     clustering_requests = 1 if run_clustering else 0
     cluster_label_requests = cluster_estimate if run_labeling else 0
@@ -1847,8 +1925,29 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = Settings.from_yaml(args.config)
-    if args.command == "run" and args.hierarchy_levels is not None:
-        settings.hierarchy_levels = max(2, min(20, int(args.hierarchy_levels)))
+    if args.command == "run":
+        if args.hierarchy_levels is not None:
+            settings.hierarchy_levels = max(2, min(20, int(args.hierarchy_levels)))
+        if args.hierarchy_depth_policy is not None:
+            settings.hierarchy_depth_policy = str(args.hierarchy_depth_policy)
+        if args.cluster_strategy is not None:
+            settings.clustering_strategy = str(args.cluster_strategy)
+        if args.cluster_leaf_mode is not None:
+            settings.clustering_leaf_mode = str(args.cluster_leaf_mode)
+        if args.cluster_target_leaf_size is not None:
+            settings.clustering_target_leaf_size = max(1, int(args.cluster_target_leaf_size))
+        if args.cluster_min_leaf_clusters is not None:
+            settings.clustering_min_leaf_clusters = max(1, int(args.cluster_min_leaf_clusters))
+        if args.cluster_max_leaf_clusters is not None:
+            settings.clustering_max_leaf_clusters = max(1, int(args.cluster_max_leaf_clusters))
+        if args.cluster_hdbscan_min_cluster_size is not None:
+            settings.clustering_hdbscan_min_cluster_size = max(
+                2, int(args.cluster_hdbscan_min_cluster_size)
+            )
+        if args.cluster_hdbscan_min_samples is not None:
+            settings.clustering_hdbscan_min_samples = max(1, int(args.cluster_hdbscan_min_samples))
+        if args.cluster_noise_policy is not None:
+            settings.clustering_noise_policy = str(args.cluster_noise_policy)
 
     if args.command == "info":
         cmd_info(settings)

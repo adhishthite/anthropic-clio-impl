@@ -107,6 +107,8 @@ Note: auto-refresh is intentionally paused on `Ingest & Run` to avoid interrupti
 | Validate input              | `uv run clio validate-input --input /path/to/file.jsonl --report-json /tmp/validation.json`                                 |
 | Full run (all major phases) | `uv run clio run --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20`                                    |
 | Streaming mode              | `uv run clio run --streaming --stream-chunk-size 32 --with-hierarchy --with-privacy --with-eval --limit 20 --eval-count 20` |
+| Adaptive clustering         | `uv run clio run --with-clustering --cluster-strategy hybrid --cluster-leaf-mode auto --cluster-target-leaf-size 25`          |
+| Strict hierarchy depth      | `uv run clio run --with-hierarchy --hierarchy-levels 6 --hierarchy-depth-policy strict_min`                                   |
 | Strict CI mode              | `uv run clio run ... --strict`                                                                                              |
 | Resume run                  | `uv run clio run --run-id <run_id> --resume --with-privacy --with-eval`                                                     |
 | List runs                   | `uv run clio list-runs --limit 30`                                                                                          |
@@ -151,6 +153,8 @@ Phase-specific outputs are under:
 - `clio run --fail-on-warning` and `--strict` support safe automation semantics.
 - Resume is guarded by input/config fingerprint checks to prevent unsafe drift.
 - Structured Outputs are enforced (`json_schema` + `strict=true`) with JSON fallback when needed.
+- Phase 3 supports `kmeans`, `hdbscan`, and `hybrid` clustering strategies.
+- `--hierarchy-levels` is treated as requested depth and now reports generated depth and stop reasons in hierarchy artifacts.
 
 ## Data, Tests, And Fresh Clones
 

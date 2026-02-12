@@ -29,10 +29,54 @@ def test_run_parser_accepts_streaming_flags():
 
 
 def test_run_parser_accepts_hierarchy_levels_override():
-    args = build_parser().parse_args(["run", "--with-hierarchy", "--hierarchy-levels", "9"])
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--with-hierarchy",
+            "--hierarchy-levels",
+            "9",
+            "--hierarchy-depth-policy",
+            "strict_min",
+        ]
+    )
     assert args.command == "run"
     assert args.with_hierarchy is True
     assert args.hierarchy_levels == 9
+    assert args.hierarchy_depth_policy == "strict_min"
+
+
+def test_run_parser_accepts_cluster_strategy_overrides():
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--with-clustering",
+            "--cluster-strategy",
+            "hdbscan",
+            "--cluster-leaf-mode",
+            "auto",
+            "--cluster-target-leaf-size",
+            "40",
+            "--cluster-min-leaf-clusters",
+            "15",
+            "--cluster-max-leaf-clusters",
+            "400",
+            "--cluster-hdbscan-min-cluster-size",
+            "10",
+            "--cluster-hdbscan-min-samples",
+            "4",
+            "--cluster-noise-policy",
+            "nearest",
+        ]
+    )
+    assert args.command == "run"
+    assert args.cluster_strategy == "hdbscan"
+    assert args.cluster_leaf_mode == "auto"
+    assert args.cluster_target_leaf_size == 40
+    assert args.cluster_min_leaf_clusters == 15
+    assert args.cluster_max_leaf_clusters == 400
+    assert args.cluster_hdbscan_min_cluster_size == 10
+    assert args.cluster_hdbscan_min_samples == 4
+    assert args.cluster_noise_policy == "nearest"
 
 
 def test_run_parser_accepts_input_and_validation_flags():

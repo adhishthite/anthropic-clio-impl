@@ -184,9 +184,10 @@ def build_multilevel_hierarchy_scaffold(
     labeled_clusters: list[dict],
     leaf_embeddings: np.ndarray,
     llm_client: LLMJsonClient,
-    max_levels: int,
+    requested_levels: int,
     target_group_size: int,
     random_seed: int,
+    depth_policy: str = "adaptive",
     max_label_concurrency: int = 1,
     progress_callback: Callable[[int, int], None] | None = None,
     adaptive_concurrency: bool = False,
@@ -202,8 +203,10 @@ def build_multilevel_hierarchy_scaffold(
             "labeled cluster count does not match leaf embeddings rows: "
             f"{len(labeled_clusters)} != {leaf_embeddings.shape[0]}."
         )
-    if max_levels <= 0:
-        raise HierarchyError(f"max_levels must be positive, got {max_levels}.")
+    if requested_levels < 2:
+        raise HierarchyError(
+            f"requested_levels must be >= 2 (root + leaf), got {requested_levels}."
+        )
     if target_group_size <= 1:
         raise HierarchyError(
             f"target_group_size must be > 1 to reduce hierarchy width, got {target_group_size}."
@@ -211,6 +214,11 @@ def build_multilevel_hierarchy_scaffold(
     if max_label_concurrency <= 0:
         raise HierarchyError(
             f"max_label_concurrency must be positive, got {max_label_concurrency}."
+        )
+    normalized_depth_policy = depth_policy.strip().lower()
+    if normalized_depth_policy not in {"adaptive", "strict_min"}:
+        raise HierarchyError(
+            f"depth_policy must be one of {{'adaptive', 'strict_min'}}, got {depth_policy!r}."
         )
 
     nodes: list[dict] = []
@@ -223,10 +231,16 @@ def build_multilevel_hierarchy_scaffold(
     label_resume_count = 0
     current_label_concurrency = max_label_concurrency
     cached_label_results = existing_label_results or {}
+    max_grouping_levels = max(1, requested_levels - 1)
+    level_build_stats: list[dict] = []
+    depth_stop_reason = "reached_requested_levels"
+    depth_stop_details: dict | None = None
 
     simulated_nodes = len(labeled_clusters)
-    for _ in range(max_levels):
+    for _ in range(max_grouping_levels):
         simulated_groups = max(1, int(np.ceil(simulated_nodes / target_group_size)))
+        if normalized_depth_policy == "strict_min" and simulated_nodes > 2:
+            simulated_groups = max(2, min(simulated_nodes - 1, simulated_groups))
         if simulated_groups >= simulated_nodes:
             break
         total_label_ops += simulated_groups
@@ -246,14 +260,32 @@ def build_multilevel_hierarchy_scaffold(
         current_nodes.append(leaf_node)
 
     level = 1
-    while level <= max_levels and len(current_nodes) > 1:
+    while level <= max_grouping_levels and len(current_nodes) > 1:
         requested_groups = max(1, int(np.ceil(len(current_nodes) / target_group_size)))
+        if normalized_depth_policy == "strict_min" and len(current_nodes) > 2:
+            requested_groups = max(2, min(len(current_nodes) - 1, requested_groups))
         group_labels, effective_groups = fit_hierarchy_groups(
             current_embeddings,
             requested_top_k=requested_groups,
             random_seed=random_seed + level,
         )
+        level_build_stats.append(
+            {
+                "level": level,
+                "input_node_count": len(current_nodes),
+                "requested_groups": requested_groups,
+                "effective_groups": int(effective_groups),
+                "depth_policy": normalized_depth_policy,
+            }
+        )
         if effective_groups >= len(current_nodes):
+            depth_stop_reason = "no_reduction_possible"
+            depth_stop_details = {
+                "level": level,
+                "input_node_count": len(current_nodes),
+                "requested_groups": requested_groups,
+                "effective_groups": int(effective_groups),
+            }
             break
 
         grouped_children: dict[int, list[dict]] = {}
@@ -468,6 +500,19 @@ def build_multilevel_hierarchy_scaffold(
         current_embeddings = np.stack(next_embeddings_rows, axis=0)
         level += 1
 
+    if len(current_nodes) <= 1:
+        depth_stop_reason = "collapsed_to_single_root"
+        depth_stop_details = {
+            "remaining_node_count": len(current_nodes),
+            "levels_generated": max((int(node["level"]) for node in nodes), default=0) + 1,
+        }
+    elif level > max_grouping_levels:
+        depth_stop_reason = "reached_requested_levels"
+        depth_stop_details = {
+            "remaining_node_count": len(current_nodes),
+            "levels_generated": max((int(node["level"]) for node in nodes), default=0) + 1,
+        }
+
     by_id = {node["node_id"]: node for node in nodes}
     children_by_parent: dict[str, list[str]] = {}
     parent_by_child: dict[str, str] = {}
@@ -516,12 +561,38 @@ def build_multilevel_hierarchy_scaffold(
         leaf_clusters.append(leaf)
 
     max_level = max((int(node["level"]) for node in nodes), default=0)
+    generated_levels = max_level + 1
+    why_not_deeper: str | None = None
+    if generated_levels < requested_levels:
+        if depth_stop_reason == "collapsed_to_single_root":
+            why_not_deeper = (
+                "Hierarchy merged into a single root before requested depth. "
+                "Increase leaf cluster diversity or lower merge aggressiveness."
+            )
+        elif depth_stop_reason == "no_reduction_possible":
+            why_not_deeper = (
+                "Hierarchy could not reduce node count at a deeper level "
+                "with current grouping settings."
+            )
+        else:
+            why_not_deeper = (
+                "Hierarchy depth is lower than requested due to dataset "
+                "structure and grouping constraints."
+            )
+
     return {
         "top_level_cluster_count": len(top_level_clusters),
         "leaf_cluster_count": len(leaf_clusters),
         "top_level_clusters": top_level_clusters,
         "leaf_clusters": leaf_clusters,
         "max_level": max_level,
+        "generated_levels": generated_levels,
+        "requested_levels": requested_levels,
+        "depth_policy": normalized_depth_policy,
+        "depth_stop_reason": depth_stop_reason,
+        "depth_stop_details": depth_stop_details,
+        "why_not_deeper": why_not_deeper,
+        "level_build_stats": level_build_stats,
         "nodes": nodes,
         "edges": edges,
         "hierarchy_label_fallback_count": len(label_fallback_records),

@@ -39,6 +39,14 @@ class Settings(BaseSettings):
 
     # Clustering
     k_base_clusters: int = 20
+    clustering_strategy: str = "hybrid"
+    clustering_leaf_mode: str = "auto"
+    clustering_target_leaf_size: int = 25
+    clustering_min_leaf_clusters: int = 20
+    clustering_max_leaf_clusters: int = 600
+    clustering_hdbscan_min_cluster_size: int = 12
+    clustering_hdbscan_min_samples: int = 6
+    clustering_noise_policy: str = "nearest"
     embedding_batch_size: int = 32
     facet_batch_size: int = 8
     facet_max_concurrency: int = 8
@@ -46,6 +54,7 @@ class Settings(BaseSettings):
     cluster_label_max_concurrency: int = 8
     hierarchy_top_k: int = 10
     hierarchy_levels: int = 3
+    hierarchy_depth_policy: str = "adaptive"
     hierarchy_target_group_size: int = 8
     hierarchy_label_max_concurrency: int = 8
     viz_projection_method: str = "umap"

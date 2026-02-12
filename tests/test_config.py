@@ -14,11 +14,20 @@ class TestSettings:
             jina_api_key="test",
         )
         assert settings.k_base_clusters == 20
+        assert settings.clustering_strategy == "hybrid"
+        assert settings.clustering_leaf_mode == "auto"
+        assert settings.clustering_target_leaf_size == 25
+        assert settings.clustering_min_leaf_clusters == 20
+        assert settings.clustering_max_leaf_clusters == 600
+        assert settings.clustering_hdbscan_min_cluster_size == 12
+        assert settings.clustering_hdbscan_min_samples == 6
+        assert settings.clustering_noise_policy == "nearest"
         assert settings.embedding_batch_size == 32
         assert settings.cluster_label_sample_size == 12
         assert settings.cluster_label_max_concurrency == 8
         assert settings.hierarchy_top_k == 10
         assert settings.hierarchy_levels == 3
+        assert settings.hierarchy_depth_policy == "adaptive"
         assert settings.hierarchy_target_group_size == 8
         assert settings.hierarchy_label_max_concurrency == 8
         assert settings.viz_projection_method == "umap"
@@ -60,13 +69,14 @@ class TestSettings:
 
     def test_from_yaml_with_overrides(self, tmp_path):
         config_file = tmp_path / "test.yaml"
-        config_file.write_text("k_base_clusters: 50\n")
+        config_file.write_text("k_base_clusters: 50\nclustering_strategy: kmeans\n")
         settings = Settings.from_yaml(
             config_file,
             openai_api_key="test",
             jina_api_key="test",
         )
         assert settings.k_base_clusters == 50
+        assert settings.clustering_strategy == "kmeans"
 
     def test_azure_resolution_prefers_azure_key_and_deployment(self):
         settings = Settings(

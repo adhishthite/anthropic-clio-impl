@@ -13,6 +13,14 @@ embedding_provider: "jina"
 embedding_model: "jina-embeddings-v3"
 
 k_base_clusters: 20
+clustering_strategy: "hybrid"
+clustering_leaf_mode: "auto"
+clustering_target_leaf_size: 25
+clustering_min_leaf_clusters: 20
+clustering_max_leaf_clusters: 600
+clustering_hdbscan_min_cluster_size: 12
+clustering_hdbscan_min_samples: 6
+clustering_noise_policy: "nearest"
 embedding_batch_size: 32
 facet_batch_size: 8
 facet_max_concurrency: 8
@@ -20,6 +28,7 @@ cluster_label_sample_size: 12
 cluster_label_max_concurrency: 8
 hierarchy_top_k: 10
 hierarchy_levels: 3
+hierarchy_depth_policy: "adaptive"
 hierarchy_target_group_size: 8
 hierarchy_label_max_concurrency: 8
 viz_projection_method: "umap"

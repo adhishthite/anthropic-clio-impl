@@ -115,6 +115,8 @@ def _base_settings(tmp_path: Path) -> Settings:
         data_dir=tmp_path / "data",
         output_dir=tmp_path / "outputs",
         k_base_clusters=4,
+        clustering_strategy="kmeans",
+        clustering_leaf_mode="fixed",
         min_unique_users=1,
         min_conversations_per_cluster=1,
         hierarchy_top_k=2,
@@ -440,6 +442,7 @@ class TestRunPipeline:
         assert hierarchy["top_level_cluster_count"] >= 1
         hierarchy_path = run_root / "clusters" / "hierarchy.json"
         assert hierarchy_path.exists()
+        assert (run_root / "clusters" / "hierarchy_build_report.json").exists()
         assert (run_root / "viz" / "tree_view.json").exists()
         assert (run_root / "clusters" / "hierarchy_checkpoint.json").exists()
         assert (run_root / "clusters" / "hierarchy_label_groups.partial.jsonl").exists()
@@ -449,6 +452,8 @@ class TestRunPipeline:
         assert "hierarchy_label_max_concurrency" in manifest
         assert "phase4_hierarchy_adaptive_concurrency_enabled" in manifest
         assert "hierarchy_checkpoint_json" in manifest["output_files"]
+        assert "hierarchy_build_report_json" in manifest["output_files"]
+        assert manifest["hierarchy_generated_levels"] >= 1
 
     def test_phase5_privacy_audit_saves_outputs(self, tmp_path: Path):
         settings = _base_settings(tmp_path)

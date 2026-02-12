@@ -29,7 +29,10 @@ from clio_pipeline.models import (
     OpenAIJsonClient,
     TextEmbeddingClient,
 )
-from clio_pipeline.pipeline.clustering import build_base_cluster_outputs, fit_base_kmeans
+from clio_pipeline.pipeline.clustering import (
+    build_base_cluster_outputs,
+    fit_base_clusters,
+)
 from clio_pipeline.pipeline.embedding import embed_texts_in_batches
 from clio_pipeline.pipeline.evaluate import (
     build_evaluation_markdown_report,
@@ -99,12 +102,21 @@ def build_run_fingerprint(
         "embedding_provider": settings.embedding_provider,
         "embedding_model": settings.embedding_model,
         "k_base_clusters": settings.k_base_clusters,
+        "clustering_strategy": settings.clustering_strategy,
+        "clustering_leaf_mode": settings.clustering_leaf_mode,
+        "clustering_target_leaf_size": settings.clustering_target_leaf_size,
+        "clustering_min_leaf_clusters": settings.clustering_min_leaf_clusters,
+        "clustering_max_leaf_clusters": settings.clustering_max_leaf_clusters,
+        "clustering_hdbscan_min_cluster_size": settings.clustering_hdbscan_min_cluster_size,
+        "clustering_hdbscan_min_samples": settings.clustering_hdbscan_min_samples,
+        "clustering_noise_policy": settings.clustering_noise_policy,
         "random_seed": settings.random_seed,
         "facet_batch_size": settings.facet_batch_size,
         "facet_max_concurrency": settings.facet_max_concurrency,
         "cluster_label_sample_size": settings.cluster_label_sample_size,
         "cluster_label_max_concurrency": settings.cluster_label_max_concurrency,
         "hierarchy_levels": settings.hierarchy_levels,
+        "hierarchy_depth_policy": settings.hierarchy_depth_policy,
         "hierarchy_target_group_size": settings.hierarchy_target_group_size,
         "hierarchy_label_max_concurrency": settings.hierarchy_label_max_concurrency,
         "privacy_threshold_min_rating": settings.privacy_threshold_min_rating,
@@ -1298,11 +1310,22 @@ def run_phase3_base_clustering(
         if created_client is not None:
             created_client.close()
 
-    labels, centroids, effective_k = fit_base_kmeans(
+    clustering_result = fit_base_clusters(
         embeddings,
+        strategy=settings.clustering_strategy,
+        leaf_mode=settings.clustering_leaf_mode,
         requested_k=settings.k_base_clusters,
+        target_leaf_size=settings.clustering_target_leaf_size,
+        min_leaf_clusters=settings.clustering_min_leaf_clusters,
+        max_leaf_clusters=settings.clustering_max_leaf_clusters,
+        hdbscan_min_cluster_size=settings.clustering_hdbscan_min_cluster_size,
+        hdbscan_min_samples=settings.clustering_hdbscan_min_samples,
+        noise_policy=settings.clustering_noise_policy,
         random_seed=settings.random_seed,
     )
+    labels = clustering_result.labels
+    centroids = clustering_result.centroids
+    effective_k = clustering_result.effective_k
     cluster_summaries, assignments = build_base_cluster_outputs(
         conversations=conversations,
         facets=facets,
@@ -1349,7 +1372,20 @@ def run_phase3_base_clustering(
         clusters_dir / "base_clusters.json",
         {
             "requested_k": settings.k_base_clusters,
+            "resolved_requested_k": clustering_result.requested_k,
             "effective_k": effective_k,
+            "clustering_strategy": clustering_result.strategy,
+            "clustering_leaf_mode": clustering_result.leaf_mode,
+            "clustering_noise_policy": clustering_result.noise_policy,
+            "clustering_auto_target_k": clustering_result.auto_target_k,
+            "clustering_raw_cluster_count": clustering_result.raw_cluster_count,
+            "clustering_noise_count": clustering_result.noise_count,
+            "clustering_noise_rate": (clustering_result.noise_count / max(1, embeddings.shape[0])),
+            "clustering_refinement_splits": clustering_result.refinement_splits,
+            "clustering_silhouette_score": clustering_result.silhouette_score,
+            "clustering_davies_bouldin_score": clustering_result.davies_bouldin_score,
+            "clustering_calinski_harabasz_score": clustering_result.calinski_harabasz_score,
+            "clustering_fallback_reason": clustering_result.fallback_reason,
             "cluster_count_total": len(cluster_summaries),
             "cluster_count_kept": sum(1 for item in cluster_summaries if item["kept_by_threshold"]),
             "clusters": cluster_summaries,
@@ -1380,8 +1416,25 @@ def run_phase3_base_clustering(
             "embedding_provider": settings.embedding_provider,
             "embedding_model": settings.embedding_model,
             "embedding_batch_size": effective_batch_size,
+            "clustering_strategy": clustering_result.strategy,
+            "clustering_leaf_mode": clustering_result.leaf_mode,
+            "clustering_noise_policy": clustering_result.noise_policy,
+            "clustering_auto_target_k": clustering_result.auto_target_k,
+            "clustering_target_leaf_size": settings.clustering_target_leaf_size,
+            "clustering_min_leaf_clusters": settings.clustering_min_leaf_clusters,
+            "clustering_max_leaf_clusters": settings.clustering_max_leaf_clusters,
+            "clustering_hdbscan_min_cluster_size": settings.clustering_hdbscan_min_cluster_size,
+            "clustering_hdbscan_min_samples": settings.clustering_hdbscan_min_samples,
             "requested_k": settings.k_base_clusters,
+            "resolved_requested_k": clustering_result.requested_k,
             "effective_k": effective_k,
+            "clustering_raw_cluster_count": clustering_result.raw_cluster_count,
+            "clustering_noise_count": clustering_result.noise_count,
+            "clustering_refinement_splits": clustering_result.refinement_splits,
+            "clustering_silhouette_score": clustering_result.silhouette_score,
+            "clustering_davies_bouldin_score": clustering_result.davies_bouldin_score,
+            "clustering_calinski_harabasz_score": clustering_result.calinski_harabasz_score,
+            "clustering_fallback_reason": clustering_result.fallback_reason,
             "viz_projection_method": projection_method,
             "cluster_count_total": len(cluster_summaries),
             "cluster_count_kept": sum(1 for item in cluster_summaries if item["kept_by_threshold"]),
@@ -1755,6 +1808,7 @@ def run_phase4_hierarchy_scaffold(
                 "execution_mode": phase4_hierarchy_execution_mode,
                 "adaptive_concurrency_enabled": adaptive_concurrency_enabled,
                 "hierarchy_levels": settings.hierarchy_levels,
+                "hierarchy_depth_policy": settings.hierarchy_depth_policy,
                 "hierarchy_target_group_size": settings.hierarchy_target_group_size,
                 "hierarchy_label_max_concurrency": hierarchy_label_max_concurrency,
                 "current_concurrency": current_concurrency,
@@ -1845,9 +1899,10 @@ def run_phase4_hierarchy_scaffold(
         labeled_clusters=labeled_clusters,
         leaf_embeddings=embeddings,
         llm_client=llm,
-        max_levels=settings.hierarchy_levels,
+        requested_levels=settings.hierarchy_levels,
         target_group_size=settings.hierarchy_target_group_size,
         random_seed=settings.random_seed,
+        depth_policy=settings.hierarchy_depth_policy,
         max_label_concurrency=hierarchy_label_max_concurrency,
         progress_callback=(
             (lambda done, total: progress_callback(done, total, "label_hierarchy_groups"))
@@ -1873,7 +1928,21 @@ def run_phase4_hierarchy_scaffold(
     )
 
     viz_dir = ensure_directory(run_root / "viz")
+    hierarchy_build_report = {
+        "run_id": run_root.name,
+        "requested_levels": int(hierarchy.get("requested_levels", settings.hierarchy_levels)),
+        "generated_levels": int(hierarchy.get("generated_levels", 1)),
+        "depth_policy": str(hierarchy.get("depth_policy", settings.hierarchy_depth_policy)),
+        "depth_stop_reason": hierarchy.get("depth_stop_reason"),
+        "depth_stop_details": hierarchy.get("depth_stop_details"),
+        "why_not_deeper": hierarchy.get("why_not_deeper"),
+        "level_build_stats": hierarchy.get("level_build_stats", []),
+        "top_level_cluster_count": int(hierarchy.get("top_level_cluster_count", 0)),
+        "leaf_cluster_count": int(hierarchy.get("leaf_cluster_count", 0)),
+        "updated_at_utc": datetime.now(UTC).isoformat(),
+    }
     save_json(clusters_dir / "hierarchy.json", hierarchy)
+    save_json(clusters_dir / "hierarchy_build_report.json", hierarchy_build_report)
     save_json(viz_dir / "tree_view.json", hierarchy_to_tree_view(hierarchy))
     if hierarchy.get("hierarchy_label_fallback_records"):
         save_json(
@@ -1889,6 +1958,9 @@ def run_phase4_hierarchy_scaffold(
     completed_phases.add("phase4_hierarchy_scaffold")
     output_files = dict(manifest.get("output_files", {}))
     output_files["hierarchy_json"] = str((clusters_dir / "hierarchy.json").as_posix())
+    output_files["hierarchy_build_report_json"] = str(
+        (clusters_dir / "hierarchy_build_report.json").as_posix()
+    )
     output_files["tree_view_json"] = str((viz_dir / "tree_view.json").as_posix())
     output_files["hierarchy_checkpoint_json"] = str(hierarchy_checkpoint_path.as_posix())
     output_files["hierarchy_label_groups_partial_jsonl"] = str(
@@ -1906,11 +1978,17 @@ def run_phase4_hierarchy_scaffold(
             "completed_phases": sorted(completed_phases),
             "requested_top_k": settings.hierarchy_top_k,
             "hierarchy_levels": settings.hierarchy_levels,
+            "hierarchy_depth_policy": settings.hierarchy_depth_policy,
             "hierarchy_target_group_size": settings.hierarchy_target_group_size,
             "effective_top_k": hierarchy["top_level_cluster_count"],
             "top_level_cluster_count": hierarchy["top_level_cluster_count"],
             "leaf_cluster_count": hierarchy["leaf_cluster_count"],
             "hierarchy_max_level": hierarchy.get("max_level", 0),
+            "hierarchy_generated_levels": int(
+                hierarchy.get("generated_levels", hierarchy.get("max_level", 0) + 1)
+            ),
+            "hierarchy_depth_stop_reason": hierarchy.get("depth_stop_reason"),
+            "hierarchy_why_not_deeper": hierarchy.get("why_not_deeper"),
             "hierarchy_label_fallback_count": int(
                 hierarchy.get("hierarchy_label_fallback_count", 0)
             ),

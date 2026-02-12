@@ -1,5 +1,7 @@
 """Tests for CLI parser options."""
 
+from __future__ import annotations
+
 import json
 
 from clio_pipeline.cli import _EtaProgressPrinter, _RunEventLogger, build_parser

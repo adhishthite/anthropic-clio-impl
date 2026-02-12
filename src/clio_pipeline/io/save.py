@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from collections.abc import Iterator
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_directory(path: str | Path) -> Path:
@@ -28,11 +31,12 @@ def _fsync_directory(path: Path) -> None:
     try:
         fd = os.open(path, os.O_RDONLY)
     except OSError:
+        logger.debug("fsync: unable to open directory %s", path)
         return
     try:
         os.fsync(fd)
     except OSError:
-        pass
+        logger.debug("fsync: sync failed for directory %s", path)
     finally:
         os.close(fd)
 
@@ -112,7 +116,7 @@ def _load_lock_payload(lock_path: Path) -> dict[str, Any]:
 
     try:
         payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -155,5 +159,5 @@ def run_lock(run_root: str | Path, *, lock_filename: str = ".run.lock") -> Itera
         except FileNotFoundError:
             pass
         except OSError:
-            pass
+            logger.warning("Failed to remove lock file: %s", lock_path, exc_info=True)
         _fsync_directory(root)

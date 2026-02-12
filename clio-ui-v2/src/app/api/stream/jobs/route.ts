@@ -1,6 +1,10 @@
 import { collectRunJobs, readRunJobLogTail } from "@/lib/clio-run-jobs";
 import { getRunsRootPath } from "@/lib/clio-runs";
-import { createSseResponse, normalizeStreamInterval } from "@/lib/sse";
+import {
+  createSseResponse,
+  normalizeStreamInterval,
+  parseLastEventId,
+} from "@/lib/sse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,50 +35,55 @@ export async function GET(request: Request): Promise<Response> {
       ? Math.floor(logLinesParam)
       : 180;
 
-  return createSseResponse((writer) => {
-    let active = true;
+  const lastEventId = parseLastEventId(request);
 
-    const emitSnapshot = async () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const jobs = await collectRunJobs(runsRoot, limit);
-        const logData = logRunId
-          ? await readRunJobLogTail({
-              runId: logRunId,
-              lines: logLines,
-              runsRoot,
-            })
-          : null;
-        writer.send("jobs_snapshot", {
-          generatedAtUtc: new Date().toISOString(),
-          runsRoot,
-          jobs,
-          logData,
-        });
-      } catch (error) {
-        writer.send("jobs_error", {
-          generatedAtUtc: new Date().toISOString(),
-          runsRoot,
-          error:
-            error instanceof Error ? error.message : "Failed to stream jobs.",
-        });
-      }
-    };
+  return createSseResponse(
+    (writer) => {
+      let active = true;
 
-    void emitSnapshot();
-    const snapshotInterval = setInterval(() => {
+      const emitSnapshot = async () => {
+        if (!active) {
+          return;
+        }
+        try {
+          const jobs = await collectRunJobs(runsRoot, limit);
+          const logData = logRunId
+            ? await readRunJobLogTail({
+                runId: logRunId,
+                lines: logLines,
+                runsRoot,
+              })
+            : null;
+          writer.send("jobs_snapshot", {
+            generatedAtUtc: new Date().toISOString(),
+            runsRoot,
+            jobs,
+            logData,
+          });
+        } catch (error) {
+          writer.send("jobs_error", {
+            generatedAtUtc: new Date().toISOString(),
+            runsRoot,
+            error:
+              error instanceof Error ? error.message : "Failed to stream jobs.",
+          });
+        }
+      };
+
       void emitSnapshot();
-    }, intervalMs);
-    const heartbeatInterval = setInterval(() => {
-      writer.comment("heartbeat");
-    }, HEARTBEAT_MS);
+      const snapshotInterval = setInterval(() => {
+        void emitSnapshot();
+      }, intervalMs);
+      const heartbeatInterval = setInterval(() => {
+        writer.comment("heartbeat");
+      }, HEARTBEAT_MS);
 
-    return () => {
-      active = false;
-      clearInterval(snapshotInterval);
-      clearInterval(heartbeatInterval);
-    };
-  });
+      return () => {
+        active = false;
+        clearInterval(snapshotInterval);
+        clearInterval(heartbeatInterval);
+      };
+    },
+    { lastEventId },
+  );
 }

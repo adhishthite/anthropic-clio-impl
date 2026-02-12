@@ -1,5 +1,7 @@
 """Tests for configuration loading."""
 
+from __future__ import annotations
+
 from clio_pipeline.config import Settings
 
 

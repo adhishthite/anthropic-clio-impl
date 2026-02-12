@@ -107,6 +107,7 @@ def label_clusters(
     sample_size: int = 12,
     max_concurrency: int = 1,
     progress_callback: Callable[[int, int], None] | None = None,
+    executor: ThreadPoolExecutor | None = None,
 ) -> list[dict]:
     """Generate name/description labels for each base cluster summary."""
 
@@ -135,9 +136,11 @@ def label_clusters(
     labeled_by_id: dict[int, dict] = {}
     total = len(ordered_clusters)
     done = 0
-    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+
+    def _run_with_executor(pool: ThreadPoolExecutor) -> None:
+        nonlocal done
         future_to_cluster_id = {
-            executor.submit(
+            pool.submit(
                 _label_one_cluster,
                 cluster=cluster,
                 facet_by_id=facet_by_id,
@@ -152,5 +155,11 @@ def label_clusters(
             done += 1
             if progress_callback is not None:
                 progress_callback(done, total)
+
+    if executor is not None:
+        _run_with_executor(executor)
+    else:
+        with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+            _run_with_executor(pool)
 
     return [labeled_by_id[int(cluster["cluster_id"])] for cluster in ordered_clusters]

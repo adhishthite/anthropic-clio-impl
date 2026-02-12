@@ -1,5 +1,7 @@
 """CLI entrypoint for the CLIO pipeline."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

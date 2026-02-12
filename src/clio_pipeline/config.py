@@ -1,5 +1,7 @@
 """Configuration management for the CLIO pipeline."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import yaml
@@ -81,7 +83,7 @@ class Settings(BaseSettings):
     output_dir: Path = Field(default=Path("runs"))
 
     @classmethod
-    def from_yaml(cls, config_path: str | Path, **overrides) -> "Settings":
+    def from_yaml(cls, config_path: str | Path, **overrides) -> Settings:
         """Load settings from a YAML config file, with env vars and overrides applied on top."""
         path = Path(config_path)
         if path.exists():

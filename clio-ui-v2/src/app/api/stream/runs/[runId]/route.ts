@@ -1,5 +1,9 @@
 import { getRunsRootPath, loadRunDetail } from "@/lib/clio-runs";
-import { createSseResponse, normalizeStreamInterval } from "@/lib/sse";
+import {
+  createSseResponse,
+  normalizeStreamInterval,
+  parseLastEventId,
+} from "@/lib/sse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,51 +27,55 @@ export async function GET(
     DEFAULT_INTERVAL_MS,
   );
   const runsRoot = getRunsRootPath();
+  const lastEventId = parseLastEventId(request);
 
-  return createSseResponse((writer) => {
-    let active = true;
+  return createSseResponse(
+    (writer) => {
+      let active = true;
 
-    const emitSnapshot = async () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const detail = await loadRunDetail(decodedRunId);
-        if (!detail) {
+      const emitSnapshot = async () => {
+        if (!active) {
+          return;
+        }
+        try {
+          const detail = await loadRunDetail(decodedRunId);
+          if (!detail) {
+            writer.send("run_detail_error", {
+              generatedAtUtc: new Date().toISOString(),
+              runsRoot,
+              runId: decodedRunId,
+              error: `Run '${decodedRunId}' not found.`,
+            });
+            return;
+          }
+          writer.send("run_detail", detail);
+        } catch (error) {
           writer.send("run_detail_error", {
             generatedAtUtc: new Date().toISOString(),
             runsRoot,
             runId: decodedRunId,
-            error: `Run '${decodedRunId}' not found.`,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to load run detail.",
           });
-          return;
         }
-        writer.send("run_detail", detail);
-      } catch (error) {
-        writer.send("run_detail_error", {
-          generatedAtUtc: new Date().toISOString(),
-          runsRoot,
-          runId: decodedRunId,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to load run detail.",
-        });
-      }
-    };
+      };
 
-    void emitSnapshot();
-    const snapshotInterval = setInterval(() => {
       void emitSnapshot();
-    }, intervalMs);
-    const heartbeatInterval = setInterval(() => {
-      writer.comment("heartbeat");
-    }, HEARTBEAT_MS);
+      const snapshotInterval = setInterval(() => {
+        void emitSnapshot();
+      }, intervalMs);
+      const heartbeatInterval = setInterval(() => {
+        writer.comment("heartbeat");
+      }, HEARTBEAT_MS);
 
-    return () => {
-      active = false;
-      clearInterval(snapshotInterval);
-      clearInterval(heartbeatInterval);
-    };
-  });
+      return () => {
+        active = false;
+        clearInterval(snapshotInterval);
+        clearInterval(heartbeatInterval);
+      };
+    },
+    { lastEventId },
+  );
 }

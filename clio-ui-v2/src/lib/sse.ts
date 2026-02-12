@@ -3,8 +3,19 @@ type SseWriter = {
   comment: (text: string) => void;
 };
 
-function formatSseEvent(event: string, payload: unknown): string {
-  return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+type SseConnectOptions = {
+  lastEventId?: string | null;
+};
+
+let _globalEventSeq = 0;
+
+function nextEventId(): string {
+  _globalEventSeq += 1;
+  return `${Date.now()}-${_globalEventSeq}`;
+}
+
+function formatSseEvent(event: string, payload: unknown, id: string): string {
+  return `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
 function formatSseComment(comment: string): string {
@@ -22,8 +33,16 @@ function streamHeaders(): HeadersInit {
   };
 }
 
+export function parseLastEventId(request: Request): string | null {
+  return request.headers.get("Last-Event-Id") || null;
+}
+
 export function createSseResponse(
-  connect: (writer: SseWriter) => (() => void) | undefined,
+  connect: (
+    writer: SseWriter,
+    options: SseConnectOptions,
+  ) => (() => void) | undefined,
+  options?: SseConnectOptions,
 ): Response {
   const encoder = new TextEncoder();
   let cleanup: (() => void) | undefined;
@@ -44,7 +63,7 @@ export function createSseResponse(
 
       const writer: SseWriter = {
         send(event, payload) {
-          enqueue(formatSseEvent(event, payload));
+          enqueue(formatSseEvent(event, payload, nextEventId()));
         },
         comment(text) {
           enqueue(formatSseComment(text));
@@ -52,7 +71,7 @@ export function createSseResponse(
       };
 
       enqueue("retry: 3000\n\n");
-      cleanup = connect(writer);
+      cleanup = connect(writer, options ?? {});
     },
     cancel() {
       closed = true;

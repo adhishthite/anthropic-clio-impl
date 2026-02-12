@@ -1,5 +1,7 @@
 """Tests for core data schemas."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 
 from clio_pipeline.schemas import Conversation, Facets, Message

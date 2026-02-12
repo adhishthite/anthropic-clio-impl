@@ -1,5 +1,9 @@
 import { discoverRuns, getRunsRootPath } from "@/lib/clio-runs";
-import { createSseResponse, normalizeStreamInterval } from "@/lib/sse";
+import {
+  createSseResponse,
+  normalizeStreamInterval,
+  parseLastEventId,
+} from "@/lib/sse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,43 +26,49 @@ export async function GET(request: Request): Promise<Response> {
       ? Math.floor(limitParam)
       : 120;
   const runsRoot = getRunsRootPath();
+  const lastEventId = parseLastEventId(request);
 
-  return createSseResponse((writer) => {
-    let active = true;
+  return createSseResponse(
+    (writer) => {
+      let active = true;
 
-    const emitSnapshot = async () => {
-      if (!active) {
-        return;
-      }
-      try {
-        const runs = await discoverRuns(limit);
-        writer.send("runs_snapshot", {
-          generatedAtUtc: new Date().toISOString(),
-          runsRoot,
-          runs,
-        });
-      } catch (error) {
-        writer.send("runs_error", {
-          generatedAtUtc: new Date().toISOString(),
-          runsRoot,
-          error:
-            error instanceof Error ? error.message : "Failed to discover runs.",
-        });
-      }
-    };
+      const emitSnapshot = async () => {
+        if (!active) {
+          return;
+        }
+        try {
+          const runs = await discoverRuns(limit);
+          writer.send("runs_snapshot", {
+            generatedAtUtc: new Date().toISOString(),
+            runsRoot,
+            runs,
+          });
+        } catch (error) {
+          writer.send("runs_error", {
+            generatedAtUtc: new Date().toISOString(),
+            runsRoot,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to discover runs.",
+          });
+        }
+      };
 
-    void emitSnapshot();
-    const snapshotInterval = setInterval(() => {
       void emitSnapshot();
-    }, intervalMs);
-    const heartbeatInterval = setInterval(() => {
-      writer.comment("heartbeat");
-    }, HEARTBEAT_MS);
+      const snapshotInterval = setInterval(() => {
+        void emitSnapshot();
+      }, intervalMs);
+      const heartbeatInterval = setInterval(() => {
+        writer.comment("heartbeat");
+      }, HEARTBEAT_MS);
 
-    return () => {
-      active = false;
-      clearInterval(snapshotInterval);
-      clearInterval(heartbeatInterval);
-    };
-  });
+      return () => {
+        active = false;
+        clearInterval(snapshotInterval);
+        clearInterval(heartbeatInterval);
+      };
+    },
+    { lastEventId },
+  );
 }

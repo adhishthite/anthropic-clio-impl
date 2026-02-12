@@ -11,7 +11,10 @@ COPY configs /app/configs
 COPY scripts /app/scripts
 COPY data/mock /app/data/mock
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip && pip install . \
+    && adduser --disabled-password --gecos "" clio
+
+USER clio
 
 ENTRYPOINT ["clio"]
 CMD ["--help"]

@@ -204,15 +204,9 @@ def _llm_metrics_snapshot(llm_client: LLMJsonClient) -> dict:
 def _serialize_messages_only(conversation: Conversation) -> dict:
     """Serialize one conversation to a minimal messages-only payload."""
 
-    return {
-        "messages": [
-            {
-                "role": message.role,
-                "content": message.content,
-            }
-            for message in conversation.messages
-        ]
-    }
+    return conversation.model_dump(
+        mode="json", include={"messages": {"__all__": {"role", "content"}}}
+    )
 
 
 def _save_updated_conversations(

@@ -433,10 +433,21 @@ async function readJobPayloadByRunId(
 
 export async function resolveInputPathFromText(
   inputPath: string,
+  runsRoot = getRunsRootPath(),
 ): Promise<string> {
   const normalized = normalizedInputPath(inputPath);
   if (!normalized) {
     throw new Error("inputPath is required when no file upload is provided.");
+  }
+  const resolvedRunsRoot = path.resolve(runsRoot);
+  const resolvedProjectRoot = path.resolve(projectRoot());
+  if (
+    !normalized.startsWith(resolvedRunsRoot + path.sep) &&
+    !normalized.startsWith(resolvedProjectRoot + path.sep)
+  ) {
+    throw new Error(
+      `Input path must be within the project or runs directory: ${normalized}`,
+    );
   }
   const stat = await fs.stat(normalized);
   if (!stat.isFile()) {

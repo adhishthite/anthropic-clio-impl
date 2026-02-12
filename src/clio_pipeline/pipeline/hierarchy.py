@@ -188,6 +188,7 @@ def build_multilevel_hierarchy_scaffold(
     adaptive_concurrency: bool = False,
     existing_label_results: dict[str, dict] | None = None,
     checkpoint_callback: Callable[[dict], None] | None = None,
+    executor: ThreadPoolExecutor | None = None,
 ) -> dict:
     """Build a multi-level hierarchy from labeled clusters."""
 
@@ -369,9 +370,14 @@ def build_multilevel_hierarchy_scaffold(
             max(1, len(remaining_group_entries)),
         )
         if level_concurrency > 1 and len(remaining_group_entries) > 1:
-            with ThreadPoolExecutor(max_workers=level_concurrency) as executor:
+            _use_pool = (
+                executor
+                if executor is not None
+                else ThreadPoolExecutor(max_workers=level_concurrency)
+            )
+            try:
                 future_to_group = {
-                    executor.submit(
+                    _use_pool.submit(
                         _label_hierarchy_group,
                         group_id=group_id,
                         group_offset=group_offset,
@@ -413,6 +419,9 @@ def build_multilevel_hierarchy_scaffold(
                     label_ops_done += 1
                     if progress_callback is not None and total_label_ops > 0:
                         progress_callback(label_ops_done, total_label_ops)
+            finally:
+                if executor is None:
+                    _use_pool.shutdown(wait=False)
         else:
             for (
                 group_offset,

@@ -69,25 +69,25 @@ def embed_texts_in_batches(
     if not texts:
         raise EmbeddingExtractionError("Cannot embed an empty text list.")
 
-    vectors: list[list[float]] = []
-    expected_dim: int | None = None
-    resumed_count = 0
+    n_texts = len(texts)
+    result: np.ndarray | None = None
+    filled = 0
 
     if checkpoint_path is not None:
         partial = _load_checkpoint(checkpoint_path)
         if partial is not None:
-            resumed_count = partial.shape[0]
-            if resumed_count >= len(texts):
-                logger.info("Checkpoint covers all %d texts, skipping embedding.", len(texts))
+            if partial.shape[0] >= n_texts:
+                logger.info("Checkpoint covers all %d texts, skipping embedding.", n_texts)
                 checkpoint_path.unlink(missing_ok=True)
-                return partial[: len(texts)]
-            expected_dim = partial.shape[1]
-            vectors = [list(row) for row in partial]
-            logger.info("Resumed %d/%d embeddings from checkpoint.", resumed_count, len(texts))
+                return partial[:n_texts]
+            result = np.empty((n_texts, partial.shape[1]), dtype=float)
+            result[: partial.shape[0]] = partial
+            filled = partial.shape[0]
+            logger.info("Resumed %d/%d embeddings from checkpoint.", filled, n_texts)
             if progress_callback is not None:
-                progress_callback(resumed_count, len(texts))
+                progress_callback(filled, n_texts)
 
-    for start_idx in range(resumed_count, len(texts), batch_size):
+    for start_idx in range(filled, n_texts, batch_size):
         batch = texts[start_idx : start_idx + batch_size]
         batch_vectors = embedding_client.embed_texts(batch)
         if len(batch_vectors) != len(batch):
@@ -96,23 +96,27 @@ def embed_texts_in_batches(
                 f"{len(batch_vectors)} != {len(batch)}."
             )
 
-        for vector in batch_vectors:
-            if expected_dim is None:
-                expected_dim = len(vector)
-            elif len(vector) != expected_dim:
+        if result is None:
+            dim = len(batch_vectors[0])
+            result = np.empty((n_texts, dim), dtype=float)
+
+        for i, vector in enumerate(batch_vectors):
+            if len(vector) != result.shape[1]:
                 raise EmbeddingExtractionError(
                     "Inconsistent embedding dimensions: "
-                    f"expected {expected_dim}, got {len(vector)}."
+                    f"expected {result.shape[1]}, got {len(vector)}."
                 )
-            vectors.append(vector)
+            result[filled + i] = vector
+        filled += len(batch_vectors)
 
         if checkpoint_path is not None:
-            _save_checkpoint(checkpoint_path, np.asarray(vectors, dtype=float))
+            _save_checkpoint(checkpoint_path, result[:filled])
 
         if progress_callback is not None:
-            progress_callback(len(vectors), len(texts))
+            progress_callback(filled, n_texts)
 
-    result = np.asarray(vectors, dtype=float)
+    if result is None:
+        raise EmbeddingExtractionError("No embeddings produced.")
 
     if checkpoint_path is not None:
         checkpoint_path.unlink(missing_ok=True)

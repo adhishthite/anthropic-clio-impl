@@ -83,6 +83,8 @@ storybook-static/
 # keep source directories that match parent ignore patterns
 !src/lib/
 !src/lib/**
+!src/app/runs/
+!src/app/runs/**
 !src/app/api/runs/
 !src/app/api/runs/**
 !src/app/api/stream/

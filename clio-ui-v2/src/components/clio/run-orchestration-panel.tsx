@@ -2,17 +2,30 @@
 
 import {
   AlertTriangle,
-  FileUp,
   Loader2,
   Play,
   Square,
   TerminalSquare,
+  Upload,
   Workflow,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type DragEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 
 import { StreamTimelineDrawer } from "@/components/clio/stream-timeline-drawer";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,7 +38,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import {
   Select,
   SelectContent,
@@ -249,15 +262,16 @@ function formatDateTime(value: string): string {
   }).format(new Date(timestamp));
 }
 
-function statusBadgeVariant(status: RunJobRecord["status"]) {
-  if (status === "running") {
-    return "default" as const;
-  }
-  if (status === "finished_ok") {
-    return "secondary" as const;
-  }
-  return "outline" as const;
-}
+const JOB_STATUS_COLOR: Record<RunJobRecord["status"], string> = {
+  running:
+    "border-blue-300/70 bg-blue-100/45 text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-300",
+  finished_ok:
+    "border-emerald-300/70 bg-emerald-100/45 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/20 dark:text-emerald-300",
+  finished_with_warnings:
+    "border-amber-300/70 bg-amber-100/45 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300",
+  finished:
+    "border-red-300/70 bg-red-100/45 text-red-800 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300",
+};
 
 function statusLabel(status: RunJobRecord["status"]): string {
   if (status === "running") {
@@ -320,6 +334,8 @@ export function RunOrchestrationPanel({
   autoRefresh,
   onRunStarted,
 }: RunOrchestrationPanelProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState<boolean>(false);
   const [requestedRunId, setRequestedRunId] = useState<string>("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [limitInput, setLimitInput] = useState<string>("");
@@ -364,13 +380,6 @@ export function RunOrchestrationPanel({
     () => PIPELINE_OPTION_ROWS.filter((option) => options[option.key]).length,
     [options],
   );
-
-  const inputSummary = useMemo(() => {
-    if (selectedFile) {
-      return `Uploaded file: ${selectedFile.name}`;
-    }
-    return "Upload a JSONL file to continue";
-  }, [selectedFile]);
 
   const runModeSummary = useMemo(() => {
     const mode = options.streaming ? "Streaming" : "Batch";
@@ -707,10 +716,45 @@ export function RunOrchestrationPanel({
 
             <div className="grid gap-4">
               <div className="space-y-2">
-                <Label htmlFor="launch-file-upload">Upload JSONL input</Label>
-                <Input
-                  id="launch-file-upload"
+                <Label>Upload JSONL input</Label>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex w-full cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors",
+                    dragOver
+                      ? "border-primary bg-primary/5"
+                      : "border-border/70 hover:border-primary/50 hover:bg-muted/30",
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(event: DragEvent) => {
+                    event.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(event: DragEvent) => {
+                    event.preventDefault();
+                    setDragOver(false);
+                    const droppedFile = event.dataTransfer.files[0] ?? null;
+                    if (droppedFile) {
+                      setSelectedFile(droppedFile);
+                    }
+                  }}
+                >
+                  <Upload className="size-6 text-muted-foreground" />
+                  {selectedFile ? (
+                    <span className="text-sm font-medium">
+                      {selectedFile.name}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">
+                      Drop file or click to browse
+                    </span>
+                  )}
+                </button>
+                <input
+                  ref={fileInputRef}
                   type="file"
+                  className="hidden"
                   accept=".jsonl,application/json,text/plain"
                   onChange={(event) => {
                     const nextFile = event.target.files?.[0] ?? null;
@@ -722,22 +766,20 @@ export function RunOrchestrationPanel({
                 </p>
               </div>
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{inputSummary}</Badge>
-              {selectedFile ? (
-                <Badge variant="secondary" className="gap-1">
-                  <FileUp className="size-3.5" />
-                  {selectedFile.name}
-                </Badge>
-              ) : null}
-            </div>
           </section>
 
           <section className="clio-panel-subtle space-y-4 p-4">
             <div className="space-y-1">
               <p className="clio-kicker">Step 2</p>
-              <h3 className="clio-display text-xl">CLIO phase profile</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="clio-display text-xl">CLIO phase profile</h3>
+                <Badge variant="outline" className="text-xs">
+                  {enabledPipelineStages} stages enabled
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {runModeSummary}
+                </Badge>
+              </div>
               <p className="text-sm text-muted-foreground">
                 Configure the pipeline to extract facets, cluster patterns, and
                 privacy-gated summaries from conversation logs.
@@ -793,13 +835,6 @@ export function RunOrchestrationPanel({
                 </div>
               ))}
             </div>
-
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Badge variant="outline">
-                {enabledPipelineStages} CLIO stages enabled
-              </Badge>
-              <Badge variant="outline">{runModeSummary}</Badge>
-            </div>
           </section>
 
           <section className="clio-panel-subtle space-y-4 p-4">
@@ -811,7 +846,7 @@ export function RunOrchestrationPanel({
               </p>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-5">
+            <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="launch-run-id">Run ID (optional)</Label>
                 <Input
@@ -831,240 +866,249 @@ export function RunOrchestrationPanel({
                   onChange={(event) => setLimitInput(event.target.value)}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-eval-count">Eval count (optional)</Label>
-                <Input
-                  id="launch-eval-count"
-                  inputMode="numeric"
-                  placeholder="e.g. 120"
-                  value={evalCountInput}
-                  onChange={(event) => setEvalCountInput(event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-hierarchy-levels">
-                  Hierarchy levels
-                </Label>
-                <Input
-                  id="launch-hierarchy-levels"
-                  inputMode="numeric"
-                  value={hierarchyLevelsInput}
-                  onChange={(event) =>
-                    setHierarchyLevelsInput(event.target.value)
-                  }
-                  disabled={!options.withHierarchy}
-                />
-                <p className="text-xs text-muted-foreground">Clamped to 2-20</p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-stream-chunk-size">
-                  Stream chunk size
-                </Label>
-                <Input
-                  id="launch-stream-chunk-size"
-                  inputMode="numeric"
-                  value={streamChunkSizeInput}
-                  onChange={(event) =>
-                    setStreamChunkSizeInput(event.target.value)
-                  }
-                />
-              </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-strategy">
-                  Cluster strategy
-                </Label>
-                <Select
-                  value={options.clusterStrategy}
-                  onValueChange={(value) =>
-                    setOptions((current) => ({
-                      ...current,
-                      clusterStrategy:
-                        value as RunLaunchOptions["clusterStrategy"],
-                    }))
-                  }
-                  disabled={!options.withClustering}
-                >
-                  <SelectTrigger id="launch-cluster-strategy">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="hybrid">Hybrid (recommended)</SelectItem>
-                    <SelectItem value="hdbscan">HDBSCAN</SelectItem>
-                    <SelectItem value="kmeans">K-means</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-leaf-mode">
-                  Leaf sizing mode
-                </Label>
-                <Select
-                  value={options.clusterLeafMode}
-                  onValueChange={(value) =>
-                    setOptions((current) => ({
-                      ...current,
-                      clusterLeafMode:
-                        value as RunLaunchOptions["clusterLeafMode"],
-                    }))
-                  }
-                  disabled={!options.withClustering}
-                >
-                  <SelectTrigger id="launch-cluster-leaf-mode">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto-size by dataset</SelectItem>
-                    <SelectItem value="fixed">Fixed k</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-hierarchy-depth-policy">
-                  Hierarchy depth policy
-                </Label>
-                <Select
-                  value={options.hierarchyDepthPolicy}
-                  onValueChange={(value) =>
-                    setOptions((current) => ({
-                      ...current,
-                      hierarchyDepthPolicy:
-                        value as RunLaunchOptions["hierarchyDepthPolicy"],
-                    }))
-                  }
-                  disabled={!options.withHierarchy}
-                >
-                  <SelectTrigger id="launch-hierarchy-depth-policy">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="adaptive">Adaptive</SelectItem>
-                    <SelectItem value="strict_min">
-                      Strict minimum depth
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-noise-policy">Noise policy</Label>
-                <Select
-                  value={options.clusterNoisePolicy}
-                  onValueChange={(value) =>
-                    setOptions((current) => ({
-                      ...current,
-                      clusterNoisePolicy:
-                        value as RunLaunchOptions["clusterNoisePolicy"],
-                    }))
-                  }
-                  disabled={!options.withClustering}
-                >
-                  <SelectTrigger id="launch-noise-policy">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="nearest">Nearest centroid</SelectItem>
-                    <SelectItem value="singleton">
-                      Singleton clusters
-                    </SelectItem>
-                    <SelectItem value="drop">Drop bucket</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <Accordion type="single" collapsible className="border-none">
+              <AccordionItem value="advanced" className="border-none">
+                <AccordionTrigger className="py-2 text-sm font-medium">
+                  Advanced parameters
+                </AccordionTrigger>
+                <AccordionContent className="space-y-4 pt-2">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-eval-count">
+                        Eval count (optional)
+                      </Label>
+                      <Input
+                        id="launch-eval-count"
+                        inputMode="numeric"
+                        placeholder="e.g. 120"
+                        value={evalCountInput}
+                        onChange={(event) =>
+                          setEvalCountInput(event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-hierarchy-levels">
+                        Hierarchy levels
+                      </Label>
+                      <Input
+                        id="launch-hierarchy-levels"
+                        inputMode="numeric"
+                        value={hierarchyLevelsInput}
+                        onChange={(event) =>
+                          setHierarchyLevelsInput(event.target.value)
+                        }
+                        disabled={!options.withHierarchy}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Clamped to 2-20
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-stream-chunk-size">
+                        Stream chunk size
+                      </Label>
+                      <Input
+                        id="launch-stream-chunk-size"
+                        inputMode="numeric"
+                        value={streamChunkSizeInput}
+                        onChange={(event) =>
+                          setStreamChunkSizeInput(event.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-target-leaf-size">
-                  Target leaf size
-                </Label>
-                <Input
-                  id="launch-cluster-target-leaf-size"
-                  inputMode="numeric"
-                  value={clusterTargetLeafSizeInput}
-                  onChange={(event) =>
-                    setClusterTargetLeafSizeInput(event.target.value)
-                  }
-                  disabled={!options.withClustering}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-min-leaf-clusters">
-                  Min leaf clusters
-                </Label>
-                <Input
-                  id="launch-cluster-min-leaf-clusters"
-                  inputMode="numeric"
-                  value={clusterMinLeafClustersInput}
-                  onChange={(event) =>
-                    setClusterMinLeafClustersInput(event.target.value)
-                  }
-                  disabled={!options.withClustering}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-max-leaf-clusters">
-                  Max leaf clusters
-                </Label>
-                <Input
-                  id="launch-cluster-max-leaf-clusters"
-                  inputMode="numeric"
-                  value={clusterMaxLeafClustersInput}
-                  onChange={(event) =>
-                    setClusterMaxLeafClustersInput(event.target.value)
-                  }
-                  disabled={!options.withClustering}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-hdbscan-min-cluster-size">
-                  HDBSCAN min cluster size
-                </Label>
-                <Input
-                  id="launch-cluster-hdbscan-min-cluster-size"
-                  inputMode="numeric"
-                  value={clusterHdbscanMinClusterSizeInput}
-                  onChange={(event) =>
-                    setClusterHdbscanMinClusterSizeInput(event.target.value)
-                  }
-                  disabled={!options.withClustering}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="launch-cluster-hdbscan-min-samples">
-                  HDBSCAN min samples
-                </Label>
-                <Input
-                  id="launch-cluster-hdbscan-min-samples"
-                  inputMode="numeric"
-                  value={clusterHdbscanMinSamplesInput}
-                  onChange={(event) =>
-                    setClusterHdbscanMinSamplesInput(event.target.value)
-                  }
-                  disabled={!options.withClustering}
-                />
-              </div>
-            </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-strategy">
+                        Cluster strategy
+                      </Label>
+                      <Select
+                        value={options.clusterStrategy}
+                        onValueChange={(value) =>
+                          setOptions((current) => ({
+                            ...current,
+                            clusterStrategy:
+                              value as RunLaunchOptions["clusterStrategy"],
+                          }))
+                        }
+                        disabled={!options.withClustering}
+                      >
+                        <SelectTrigger id="launch-cluster-strategy">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="hybrid">
+                            Hybrid (recommended)
+                          </SelectItem>
+                          <SelectItem value="hdbscan">HDBSCAN</SelectItem>
+                          <SelectItem value="kmeans">K-means</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-leaf-mode">
+                        Leaf sizing mode
+                      </Label>
+                      <Select
+                        value={options.clusterLeafMode}
+                        onValueChange={(value) =>
+                          setOptions((current) => ({
+                            ...current,
+                            clusterLeafMode:
+                              value as RunLaunchOptions["clusterLeafMode"],
+                          }))
+                        }
+                        disabled={!options.withClustering}
+                      >
+                        <SelectTrigger id="launch-cluster-leaf-mode">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">
+                            Auto-size by dataset
+                          </SelectItem>
+                          <SelectItem value="fixed">Fixed k</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-hierarchy-depth-policy">
+                        Hierarchy depth policy
+                      </Label>
+                      <Select
+                        value={options.hierarchyDepthPolicy}
+                        onValueChange={(value) =>
+                          setOptions((current) => ({
+                            ...current,
+                            hierarchyDepthPolicy:
+                              value as RunLaunchOptions["hierarchyDepthPolicy"],
+                          }))
+                        }
+                        disabled={!options.withHierarchy}
+                      >
+                        <SelectTrigger id="launch-hierarchy-depth-policy">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="adaptive">Adaptive</SelectItem>
+                          <SelectItem value="strict_min">
+                            Strict minimum depth
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-noise-policy">Noise policy</Label>
+                      <Select
+                        value={options.clusterNoisePolicy}
+                        onValueChange={(value) =>
+                          setOptions((current) => ({
+                            ...current,
+                            clusterNoisePolicy:
+                              value as RunLaunchOptions["clusterNoisePolicy"],
+                          }))
+                        }
+                        disabled={!options.withClustering}
+                      >
+                        <SelectTrigger id="launch-noise-policy">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="nearest">
+                            Nearest centroid
+                          </SelectItem>
+                          <SelectItem value="singleton">
+                            Singleton clusters
+                          </SelectItem>
+                          <SelectItem value="drop">Drop bucket</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                onClick={() => void handleLaunchRun()}
-                disabled={launching}
-                className="gap-2"
-              >
-                {launching ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Launching...
-                  </>
-                ) : (
-                  <>
-                    <Play className="size-4" />
-                    Start run
-                  </>
-                )}
-              </Button>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-target-leaf-size">
+                        Target leaf size
+                      </Label>
+                      <Input
+                        id="launch-cluster-target-leaf-size"
+                        inputMode="numeric"
+                        value={clusterTargetLeafSizeInput}
+                        onChange={(event) =>
+                          setClusterTargetLeafSizeInput(event.target.value)
+                        }
+                        disabled={!options.withClustering}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-min-leaf-clusters">
+                        Min leaf clusters
+                      </Label>
+                      <Input
+                        id="launch-cluster-min-leaf-clusters"
+                        inputMode="numeric"
+                        value={clusterMinLeafClustersInput}
+                        onChange={(event) =>
+                          setClusterMinLeafClustersInput(event.target.value)
+                        }
+                        disabled={!options.withClustering}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-max-leaf-clusters">
+                        Max leaf clusters
+                      </Label>
+                      <Input
+                        id="launch-cluster-max-leaf-clusters"
+                        inputMode="numeric"
+                        value={clusterMaxLeafClustersInput}
+                        onChange={(event) =>
+                          setClusterMaxLeafClustersInput(event.target.value)
+                        }
+                        disabled={!options.withClustering}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-hdbscan-min-cluster-size">
+                        HDBSCAN min cluster size
+                      </Label>
+                      <Input
+                        id="launch-cluster-hdbscan-min-cluster-size"
+                        inputMode="numeric"
+                        value={clusterHdbscanMinClusterSizeInput}
+                        onChange={(event) =>
+                          setClusterHdbscanMinClusterSizeInput(
+                            event.target.value,
+                          )
+                        }
+                        disabled={!options.withClustering}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="launch-cluster-hdbscan-min-samples">
+                        HDBSCAN min samples
+                      </Label>
+                      <Input
+                        id="launch-cluster-hdbscan-min-samples"
+                        inputMode="numeric"
+                        value={clusterHdbscanMinSamplesInput}
+                        onChange={(event) =>
+                          setClusterHdbscanMinSamplesInput(event.target.value)
+                        }
+                        disabled={!options.withClustering}
+                      />
+                    </div>
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge variant="outline">
                 chunk {streamChunkSizeInput || "32"}
               </Badge>
@@ -1083,6 +1127,24 @@ export function RunOrchestrationPanel({
                 hierarchy policy {options.hierarchyDepthPolicy}
               </Badge>
             </div>
+
+            <Button
+              onClick={() => void handleLaunchRun()}
+              disabled={launching}
+              className="gap-2"
+            >
+              {launching ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Launching...
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" />
+                  Start run
+                </>
+              )}
+            </Button>
           </section>
         </CardContent>
       </Card>
@@ -1163,14 +1225,19 @@ export function RunOrchestrationPanel({
                         {statusHint(job)}
                       </p>
                     </div>
-                    <Badge variant={statusBadgeVariant(job.status)}>
+                    <Badge
+                      variant="outline"
+                      className={JOB_STATUS_COLOR[job.status]}
+                    >
                       {statusLabel(job.status)}
                     </Badge>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant={
+                        selectedLogRunId === job.runId ? "default" : "outline"
+                      }
                       onClick={() => setSelectedLogRunId(job.runId)}
                       className="gap-1"
                     >
@@ -1244,16 +1311,27 @@ export function RunOrchestrationPanel({
             ) : null}
 
             <div className="rounded-xl border border-border/70 bg-muted/20 p-2">
-              <ScrollArea className="h-[350px]">
+              <div className="max-h-[400px] overflow-y-auto">
                 <pre className="whitespace-pre-wrap break-words p-2 text-xs leading-5">
                   {logData?.logTail || "No logs yet for this run."}
                 </pre>
-              </ScrollArea>
+              </div>
             </div>
 
             {logData ? (
-              <div className="text-xs text-muted-foreground">
-                {logData.lineCount} lines · {logData.status} · {logData.logPath}
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {logData.lineCount} lines · {logData.status} ·{" "}
+                  {logData.logPath}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={() => setLogData(null)}
+                >
+                  Clear
+                </Button>
               </div>
             ) : null}
           </CardContent>

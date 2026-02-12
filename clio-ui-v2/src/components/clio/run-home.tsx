@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  ArrowRight,
-  Clock3,
-  FolderKanban,
-  RefreshCw,
-  Sparkles,
-} from "lucide-react";
+import { ChevronRight, FolderKanban, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -29,13 +23,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import type { RunListResponse, RunState } from "@/lib/clio-types";
@@ -71,14 +58,6 @@ const RUN_STATE_CARD_CLASS: Record<RunState, string> = {
     "border-red-300/70 bg-red-100/45 dark:border-red-900/60 dark:bg-red-950/20",
   partial:
     "border-violet-300/70 bg-violet-100/45 dark:border-violet-900/60 dark:bg-violet-950/20",
-};
-
-const RUN_STATE_DOT_CLASS: Record<RunState, string> = {
-  running: "bg-blue-500",
-  completed: "bg-emerald-500",
-  completed_with_warnings: "bg-amber-500",
-  failed: "bg-red-500",
-  partial: "bg-violet-500",
 };
 
 function formatRelativeTime(value: string): string {
@@ -122,7 +101,7 @@ export function RunHome() {
   const [loadingRuns, setLoadingRuns] = useState<boolean>(true);
   const [runsError, setRunsError] = useState<string>("");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(false);
-  const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const [showAllRuns, setShowAllRuns] = useState<boolean>(false);
 
   const loadRuns = useCallback(
     async (signal?: AbortSignal, options?: { background?: boolean }) => {
@@ -137,12 +116,6 @@ export function RunHome() {
         );
         setRunsData(payload);
         setRunsError("");
-        setSelectedRunId((current) => {
-          if (current && payload.runs.some((run) => run.runId === current)) {
-            return current;
-          }
-          return payload.runs[0]?.runId ?? "";
-        });
       } catch (error) {
         if (signal?.aborted) {
           return;
@@ -181,10 +154,6 @@ export function RunHome() {
 
   const hasRuns = Boolean(runsData && runsData.runs.length > 0);
 
-  const selectedRun = useMemo(
-    () => runsData?.runs.find((run) => run.runId === selectedRunId) ?? null,
-    [runsData, selectedRunId],
-  );
   const runSnapshot = useMemo(() => {
     if (!runsData) {
       return {
@@ -218,13 +187,6 @@ export function RunHome() {
     );
   }, [runsData]);
 
-  const openSelectedRun = useCallback(() => {
-    if (!selectedRunId) {
-      return;
-    }
-    router.push(`/runs/${encodeURIComponent(selectedRunId)}`);
-  }, [router, selectedRunId]);
-
   const handleRunStarted = useCallback(
     (runId: string) => {
       router.push(`/runs/${encodeURIComponent(runId)}`);
@@ -242,21 +204,18 @@ export function RunHome() {
           <div className="clio-grid-pattern pointer-events-none absolute inset-0 opacity-35" />
           <div className="relative grid gap-4 xl:grid-cols-[1.45fr_0.8fr] 2xl:grid-cols-[1.7fr_0.8fr] xl:items-end">
             <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="gap-1">
-                  <Sparkles className="size-3.5" />
-                  Run workspace
-                </Badge>
-                <Badge variant="outline" className="gap-1">
-                  <Clock3 className="size-3.5" />
-                  {runsData?.generatedAtUtc
-                    ? `Updated ${formatRelativeTime(runsData.generatedAtUtc)}`
-                    : "Waiting for first sync"}
-                </Badge>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60" />
+                  <span className="relative inline-flex size-2 rounded-full bg-primary" />
+                </span>
+                {runsData?.generatedAtUtc
+                  ? `Updated ${formatRelativeTime(runsData.generatedAtUtc)}`
+                  : "Waiting for first sync"}
               </div>
 
               <h1 className="clio-display text-3xl leading-tight md:text-4xl">
-                Pick one run. Keep everything else out of the way.
+                Choose a run to inspect
               </h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
                 CLIO is easiest to inspect one run at a time. This home stays
@@ -269,130 +228,71 @@ export function RunHome() {
             <div className="clio-panel p-4 md:p-5">
               <p className="clio-kicker">Run snapshot</p>
               <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="clio-panel-subtle px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Total runs</p>
-                  <p className="mt-1 text-xl font-semibold">
-                    {runSnapshot.total}
-                  </p>
-                </div>
-                <div className="clio-panel-subtle px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Running</p>
-                  <p className="mt-1 text-xl font-semibold">
-                    {runSnapshot.running}
-                  </p>
-                </div>
-                <div className="clio-panel-subtle px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Completed</p>
-                  <p className="mt-1 text-xl font-semibold">
-                    {runSnapshot.completed}
-                  </p>
-                </div>
-                <div className="clio-panel-subtle px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Failed</p>
-                  <p className="mt-1 text-xl font-semibold">
-                    {runSnapshot.failed}
-                  </p>
-                </div>
+                {[
+                  { label: "Total runs", value: runSnapshot.total },
+                  { label: "Running", value: runSnapshot.running },
+                  { label: "Completed", value: runSnapshot.completed },
+                  { label: "Failed", value: runSnapshot.failed },
+                ].map((cell) => (
+                  <div key={cell.label} className="clio-panel-subtle px-3 py-2">
+                    <p className="text-xs text-muted-foreground">
+                      {cell.label}
+                    </p>
+                    <p
+                      className={cn(
+                        "mt-1 text-xl",
+                        cell.value > 0
+                          ? "font-bold text-foreground"
+                          : "font-medium text-muted-foreground",
+                      )}
+                    >
+                      {cell.value}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[1.45fr_0.8fr] 2xl:grid-cols-[1.75fr_0.85fr]">
+        <section>
           <Card className="clio-panel border-border/70">
             <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Open run dashboard</CardTitle>
-              <CardDescription>
-                Choose one run and open its dedicated dashboard page.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
-                <div className="space-y-2">
-                  <label className="clio-kicker" htmlFor="run-select-home">
-                    Run ID
-                  </label>
-                  <Select
-                    value={selectedRunId}
-                    onValueChange={setSelectedRunId}
-                  >
-                    <SelectTrigger id="run-select-home">
-                      <SelectValue placeholder="Select a run" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {runsData?.runs.map((run) => (
-                        <SelectItem key={run.runId} value={run.runId}>
-                          {run.runId} · {RUN_STATE_META[run.state].label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-lg">Runs</CardTitle>
+                  <CardDescription>
+                    Select a run to open its dashboard.
+                  </CardDescription>
                 </div>
-
-                <Button
-                  className="h-10 gap-2"
-                  onClick={openSelectedRun}
-                  disabled={!selectedRunId}
-                >
-                  Open dashboard
-                  <ArrowRight className="size-4" />
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-2 rounded-md border border-border/70 px-2.5 py-1.5 text-sm">
-                  <Switch
-                    checked={autoRefresh}
-                    onCheckedChange={setAutoRefresh}
-                    aria-label="Toggle run list auto refresh"
-                  />
-                  Auto refresh run list (30s)
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => void loadRuns()}
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh list
-                </Button>
-              </div>
-
-              {selectedRun ? (
-                <div className="rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="font-medium">{selectedRun.runId}</p>
-                    <Badge
-                      variant={RUN_STATE_META[selectedRun.state].badgeVariant}
-                    >
-                      {RUN_STATE_META[selectedRun.state].label}
-                    </Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2 rounded-md border border-border/70 px-2.5 py-1.5 text-sm">
+                    <Switch
+                      checked={autoRefresh}
+                      onCheckedChange={setAutoRefresh}
+                      aria-label="Toggle run list auto refresh"
+                    />
+                    Auto-refresh (30s)
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    updated {formatRelativeTime(selectedRun.updatedAtUtc)} ·
-                    progress {selectedRun.overallProgressPercent.toFixed(1)}%
-                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => void loadRuns()}
+                  >
+                    <RefreshCw className="size-4" />
+                    Refresh
+                  </Button>
                 </div>
-              ) : null}
-
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
               {runsError ? (
                 <Alert variant="destructive">
                   <AlertTitle>Could not load runs</AlertTitle>
                   <AlertDescription>{runsError}</AlertDescription>
                 </Alert>
               ) : null}
-            </CardContent>
-          </Card>
-
-          <Card className="clio-panel border-border/70">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg">Recent runs</CardTitle>
-              <CardDescription>
-                Lightweight index view. Open a run to see full details.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
               {loadingRuns && !runsData ? (
                 <div className="grid gap-2 2xl:grid-cols-3">
                   {[1, 2, 3].map((row) => (
@@ -415,43 +315,83 @@ export function RunHome() {
                 </Empty>
               ) : null}
 
-              <div className="grid gap-2 2xl:grid-cols-3">
-                {runsData?.runs.slice(0, 12).map((run) => (
-                  <div
-                    key={run.runId}
-                    className={cn(
-                      "flex items-center justify-between gap-3 rounded-lg border px-3 py-2",
-                      RUN_STATE_CARD_CLASS[run.state],
-                    )}
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "size-2 rounded-full",
-                            RUN_STATE_DOT_CLASS[run.state],
-                          )}
-                        />
-                        <span className="text-[11px] font-medium text-muted-foreground">
-                          {RUN_STATE_META[run.state].label}
-                        </span>
-                      </div>
-                      <p className="truncate text-sm font-medium">
-                        {run.runId}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {formatRelativeTime(run.updatedAtUtc)} ·{" "}
-                        {run.overallProgressPercent.toFixed(1)}%
-                      </p>
+              {(() => {
+                const DEFAULT_VISIBLE = 12;
+                const allRuns = runsData?.runs ?? [];
+                const visibleRuns = showAllRuns
+                  ? allRuns
+                  : allRuns.slice(0, DEFAULT_VISIBLE);
+                const hiddenCount = allRuns.length - DEFAULT_VISIBLE;
+                return (
+                  <>
+                    <div className="grid gap-2 2xl:grid-cols-3">
+                      {visibleRuns.map((run) => {
+                        const isCompleted =
+                          run.state === "completed" ||
+                          run.state === "completed_with_warnings";
+                        return (
+                          <Link
+                            key={run.runId}
+                            href={`/runs/${encodeURIComponent(run.runId)}`}
+                            className={cn(
+                              "group flex items-center justify-between gap-3 rounded-lg border px-3 py-2 transition-shadow hover:shadow-sm",
+                              RUN_STATE_CARD_CLASS[run.state],
+                            )}
+                          >
+                            <div className="min-w-0 space-y-0.5">
+                              <Badge
+                                variant={RUN_STATE_META[run.state].badgeVariant}
+                                className="text-[11px]"
+                              >
+                                {RUN_STATE_META[run.state].label}
+                              </Badge>
+                              <p className="truncate text-sm font-medium">
+                                {run.runId}
+                              </p>
+                              {run.conversationCountInput > 0 ? (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {run.conversationCountInput} conversations
+                                  {run.clusterCountTotal > 0
+                                    ? ` · ${run.clusterCountTotal} clusters`
+                                    : ""}
+                                </p>
+                              ) : null}
+                              <p className="truncate text-xs text-muted-foreground">
+                                {formatRelativeTime(run.updatedAtUtc)}
+                                {!isCompleted
+                                  ? ` · ${run.overallProgressPercent.toFixed(1)}%`
+                                  : ""}
+                              </p>
+                            </div>
+                            <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                          </Link>
+                        );
+                      })}
                     </div>
-                    <Button asChild size="sm" variant="outline">
-                      <Link href={`/runs/${encodeURIComponent(run.runId)}`}>
-                        Open
-                      </Link>
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                    {hiddenCount > 0 && !showAllRuns ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-2 w-full"
+                        onClick={() => setShowAllRuns(true)}
+                      >
+                        Show {hiddenCount} more run
+                        {hiddenCount > 1 ? "s" : ""}
+                      </Button>
+                    ) : null}
+                    {showAllRuns && allRuns.length > DEFAULT_VISIBLE ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-2 w-full"
+                        onClick={() => setShowAllRuns(false)}
+                      >
+                        Show fewer
+                      </Button>
+                    ) : null}
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
         </section>

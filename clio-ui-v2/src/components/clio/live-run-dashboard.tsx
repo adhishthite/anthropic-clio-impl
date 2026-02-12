@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   CircleDashed,
   CircleHelp,
   Clock3,
@@ -49,6 +50,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Empty,
   EmptyContent,
@@ -255,6 +261,41 @@ const ARTIFACT_META: Record<string, { label: string; description: string }> = {
   },
 };
 
+const ARTIFACT_GROUPS: { label: string; keys: string[] }[] = [
+  {
+    label: "Run metadata",
+    keys: ["run_manifest_json", "run_events_jsonl", "run_metrics_json"],
+  },
+  {
+    label: "Dataset",
+    keys: ["conversation_jsonl", "conversation_updated_jsonl"],
+  },
+  {
+    label: "Facets",
+    keys: ["facets_jsonl", "facets_errors_jsonl"],
+  },
+  {
+    label: "Clustering",
+    keys: [
+      "summary_embeddings_npy",
+      "base_centroids_npy",
+      "base_assignments_jsonl",
+      "base_clusters_json",
+      "labeled_clusters_json",
+      "labeled_clusters_privacy_filtered_json",
+      "hierarchy_json",
+    ],
+  },
+  {
+    label: "Privacy and evaluation",
+    keys: ["privacy_audit_json", "phase6_metrics_json", "phase6_report_md"],
+  },
+  {
+    label: "Visualization",
+    keys: ["viz_map_points_jsonl", "viz_map_clusters_json", "tree_view_json"],
+  },
+];
+
 type StatCardTone = "neutral" | "success" | "alert" | "info";
 
 function formatDateTime(
@@ -401,9 +442,9 @@ function phaseLabelFromTimeline(
 function metricLabel(item: PhaseTimelineItem): string {
   if (item.processed === null) {
     if (item.status === "completed" || item.status === "resumed") {
-      return item.note || "Completed - no live checkpoint for this phase";
+      return item.note || "Completed";
     }
-    return item.note || "No checkpoint yet";
+    return item.note || "Awaiting progress";
   }
   if (item.total !== null) {
     return `${item.processed}/${item.total}`;
@@ -419,7 +460,7 @@ function checkpointTimestampLabel(
     return `updated ${formatRelativeTime(item.updatedAtUtc, nowMs)}`;
   }
   if (item.status === "completed" || item.status === "resumed") {
-    return "checkpoint not emitted";
+    return "no detailed progress available";
   }
   return "no checkpoint timestamp";
 }
@@ -984,6 +1025,22 @@ export function LiveRunDashboard({
     );
   }, [detailData]);
 
+  const deduplicatedEvents = useMemo(() => {
+    if (!detailData) {
+      return [];
+    }
+    const seen = new Set<string>();
+    const result: typeof detailData.latestEvents = [];
+    for (const event of detailData.latestEvents) {
+      const key = `${event.message}::${event.status ?? ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(event);
+      }
+    }
+    return result;
+  }, [detailData]);
+
   const hasRuns = Boolean(runsData && runsData.runs.length > 0);
   const handleRunStarted = useCallback(
     (runId: string) => {
@@ -1020,13 +1077,8 @@ export function LiveRunDashboard({
               </div>
 
               <h1 className="clio-display text-3xl leading-tight md:text-4xl">
-                Inspect one CLIO run from ingest to evaluation
+                Run detail
               </h1>
-              <p className="max-w-2xl text-sm text-muted-foreground md:text-base">
-                CLIO surfaces usage patterns as aggregate outputs: facet
-                extraction, semantic clustering, hierarchy grouping, privacy
-                filtering, and synthetic evaluation metrics.
-              </p>
             </div>
 
             <div className="clio-panel relative overflow-hidden p-4 md:p-5">
@@ -1227,26 +1279,39 @@ export function LiveRunDashboard({
             <CardHeader className="pb-3">
               <CardTitle className="text-lg">Stream health</CardTitle>
               <CardDescription>
-                SSE channel state for live run snapshots and selected run detail
-                updates.
+                {detailData &&
+                detailData.run.state !== "running" &&
+                !autoRefresh
+                  ? "Streams inactive for completed run."
+                  : "SSE channel state for live run snapshots and detail updates."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <StreamHealthRow label="runs" health={runsStreamHealth} />
-              <StreamHealthRow
-                label="run-detail"
-                health={runDetailStreamHealth}
-              />
-              <div className="clio-panel-subtle px-3 py-2 text-xs text-muted-foreground">
-                <p>
-                  runs: {streamHint(runsStreamHealth, relativeNowMs)} - messages{" "}
-                  {runsStreamHealth.totalMessages}
-                </p>
-                <p>
-                  detail: {streamHint(runDetailStreamHealth, relativeNowMs)} -
-                  messages {runDetailStreamHealth.totalMessages}
-                </p>
-              </div>
+              {detailData &&
+              detailData.run.state !== "running" &&
+              !autoRefresh ? (
+                <div className="clio-panel-subtle px-3 py-2 text-sm text-muted-foreground">
+                  Streams: idle
+                </div>
+              ) : (
+                <>
+                  <StreamHealthRow label="runs" health={runsStreamHealth} />
+                  <StreamHealthRow
+                    label="run-detail"
+                    health={runDetailStreamHealth}
+                  />
+                  <div className="clio-panel-subtle px-3 py-2 text-xs text-muted-foreground">
+                    <p>
+                      runs: {streamHint(runsStreamHealth, relativeNowMs)} -{" "}
+                      messages {runsStreamHealth.totalMessages}
+                    </p>
+                    <p>
+                      detail: {streamHint(runDetailStreamHealth, relativeNowMs)}{" "}
+                      - messages {runDetailStreamHealth.totalMessages}
+                    </p>
+                  </div>
+                </>
+              )}
               <StreamTimelineDrawer
                 title="Dashboard Stream Timeline"
                 description="Connection lifecycle, reconnect attempts, and health events for dashboard SSE channels."
@@ -1346,9 +1411,13 @@ export function LiveRunDashboard({
                 icon={<Activity className="size-4 text-primary" />}
               />
               <DashboardStatCard
-                title="Required artifacts missing"
-                value={`${detailData.summary.requiredArtifactsMissing}`}
-                subtitle={`${detailData.summary.optionalArtifactsPresent} optional artifacts present`}
+                title="Artifact status"
+                value={
+                  detailData.summary.requiredArtifactsMissing > 0
+                    ? `${detailData.summary.requiredArtifactsMissing} missing`
+                    : "All required present"
+                }
+                subtitle={`${detailData.summary.optionalArtifactsPresent} optional available`}
                 icon={
                   detailData.summary.requiredArtifactsMissing > 0 ? (
                     <FolderX className="size-4 text-destructive" />
@@ -1368,7 +1437,11 @@ export function LiveRunDashboard({
               <CardHeader className="pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="clio-kicker">Current phase</p>
+                    <p className="clio-kicker">
+                      {detailData.run.state === "running"
+                        ? "Current phase"
+                        : "Last phase"}
+                    </p>
                     <CardTitle className="mt-1 text-2xl">
                       {phaseLabelFromTimeline(detailData, detailData.run.phase)}
                     </CardTitle>
@@ -1434,12 +1507,15 @@ export function LiveRunDashboard({
                       description: item.label,
                     };
                     const statusMeta = PHASE_STATUS_META[item.status];
+                    const isSkipped =
+                      item.status === "skipped" || item.status === "pending";
                     return (
                       <div
                         key={item.phase}
                         className={cn(
-                          "rounded-xl border px-3 py-2 text-sm",
+                          "rounded-xl border text-sm",
                           stageCardTone(item.status),
+                          isSkipped ? "px-2.5 py-1.5 opacity-60" : "px-3 py-2",
                         )}
                       >
                         <div className="flex items-start justify-between gap-2">
@@ -1451,29 +1527,35 @@ export function LiveRunDashboard({
                               <p className="truncate font-medium">
                                 {stageMeta.shortLabel}
                               </p>
-                              <HelpTooltip content={stageMeta.description} />
+                              {!isSkipped ? (
+                                <HelpTooltip content={stageMeta.description} />
+                              ) : null}
                             </div>
-                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                              {item.note || stageMeta.description}
-                            </p>
+                            {!isSkipped ? (
+                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                {item.note || stageMeta.description}
+                              </p>
+                            ) : null}
                           </div>
                           <Badge variant={statusMeta.badgeVariant}>
                             {statusMeta.label}
                           </Badge>
                         </div>
-                        {item.percent !== null ? (
-                          <Progress className="mt-2" value={item.percent} />
+                        {!isSkipped ? (
+                          <Progress
+                            className="mt-2"
+                            value={
+                              item.status === "completed" ||
+                              item.status === "resumed"
+                                ? 100
+                                : (item.percent ?? 0)
+                            }
+                          />
                         ) : null}
                       </div>
                     );
                   })}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Current stage:{" "}
-                  <span className="font-medium text-foreground">
-                    {phaseLabelFromTimeline(detailData, detailData.run.phase)}
-                  </span>
-                </p>
               </CardContent>
             </Card>
 
@@ -1525,9 +1607,11 @@ export function LiveRunDashboard({
                             {PHASE_STATUS_META[item.status].label}
                           </Badge>
                         </div>
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                          <span>{metricLabel(item)}</span>
-                          <span>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground">
+                            {metricLabel(item)}
+                          </span>
+                          <span className="font-medium text-muted-foreground/80">
                             {checkpointTimestampLabel(item, relativeNowMs)}
                           </span>
                         </div>
@@ -1553,14 +1637,14 @@ export function LiveRunDashboard({
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {detailData.latestEvents.length === 0 ? (
+                  {deduplicatedEvents.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       No events recorded yet.
                     </p>
                   ) : (
                     <ScrollArea className="h-[430px] 2xl:h-[520px] pr-3">
                       <div className="space-y-3">
-                        {detailData.latestEvents.map((event) => (
+                        {deduplicatedEvents.map((event) => (
                           <div
                             key={event.id}
                             className={cn(
@@ -1606,57 +1690,135 @@ export function LiveRunDashboard({
               <CardHeader>
                 <CardTitle className="text-lg">Artifact readiness</CardTitle>
                 <CardDescription>
-                  Expected CLIO outputs across conversations, clusters, privacy,
-                  evaluation, and visualization.
+                  Expected CLIO outputs grouped by pipeline phase.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                {detailData.artifactStatus.map((artifact) => {
-                  const artifactMeta = ARTIFACT_META[artifact.artifactKey];
+              <CardContent className="space-y-3">
+                {ARTIFACT_GROUPS.map((group) => {
+                  const groupArtifacts = group.keys
+                    .map((key) =>
+                      detailData.artifactStatus.find(
+                        (a) => a.artifactKey === key,
+                      ),
+                    )
+                    .filter((a): a is NonNullable<typeof a> => a !== undefined);
+                  if (groupArtifacts.length === 0) {
+                    return null;
+                  }
+                  const presentCount = groupArtifacts.filter(
+                    (a) => a.exists,
+                  ).length;
                   return (
-                    <div
-                      key={artifact.artifactKey}
-                      className={cn(
-                        "rounded-xl border px-3 py-2 text-sm",
-                        artifact.exists
-                          ? "border-emerald-300/60 bg-emerald-100/40 dark:border-emerald-900 dark:bg-emerald-950/20"
-                          : artifact.required
-                            ? "border-red-300/60 bg-red-100/40 dark:border-red-900 dark:bg-red-950/20"
-                            : "border-border/70 bg-muted/20",
-                      )}
+                    <Collapsible
+                      key={group.label}
+                      defaultOpen={presentCount > 0}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
+                      <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-sm font-medium hover:bg-muted/40">
+                        <span>{group.label}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">
+                            {presentCount}/{groupArtifacts.length} present
+                          </Badge>
+                          <ChevronDown className="size-4 text-muted-foreground transition-transform [[data-state=open]>&]:rotate-180" />
+                        </div>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                          {groupArtifacts.map((artifact) => {
+                            const artifactMeta =
+                              ARTIFACT_META[artifact.artifactKey];
+                            return (
+                              <div
+                                key={artifact.artifactKey}
+                                className={cn(
+                                  "rounded-xl border px-3 py-2 text-sm",
+                                  artifact.exists
+                                    ? "border-emerald-300/60 bg-emerald-100/40 dark:border-emerald-900 dark:bg-emerald-950/20"
+                                    : artifact.required
+                                      ? "border-red-300/60 bg-red-100/40 dark:border-red-900 dark:bg-red-950/20"
+                                      : "border-border/70 bg-muted/20",
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-medium">
+                                        {artifactMeta?.label ??
+                                          artifact.artifactKey}
+                                      </span>
+                                      {artifactMeta ? (
+                                        <HelpTooltip
+                                          content={artifactMeta.description}
+                                        />
+                                      ) : null}
+                                    </div>
+                                    <p
+                                      className="mt-1 truncate text-xs text-muted-foreground"
+                                      title={artifact.artifactKey}
+                                    >
+                                      {artifact.relativePath}
+                                    </p>
+                                  </div>
+                                  <Badge
+                                    variant={
+                                      artifact.exists ? "secondary" : "outline"
+                                    }
+                                  >
+                                    {artifact.exists
+                                      ? "present"
+                                      : artifact.required
+                                        ? "missing"
+                                        : "not generated"}
+                                  </Badge>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  );
+                })}
+                {detailData.artifactStatus
+                  .filter(
+                    (a) =>
+                      !ARTIFACT_GROUPS.some((g) =>
+                        g.keys.includes(a.artifactKey),
+                      ),
+                  )
+                  .map((artifact) => {
+                    const artifactMeta = ARTIFACT_META[artifact.artifactKey];
+                    return (
+                      <div
+                        key={artifact.artifactKey}
+                        className={cn(
+                          "rounded-xl border px-3 py-2 text-sm",
+                          artifact.exists
+                            ? "border-emerald-300/60 bg-emerald-100/40 dark:border-emerald-900 dark:bg-emerald-950/20"
+                            : "border-border/70 bg-muted/20",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
                             <span className="font-medium">
                               {artifactMeta?.label ?? artifact.artifactKey}
                             </span>
-                            {artifactMeta ? (
-                              <HelpTooltip content={artifactMeta.description} />
-                            ) : null}
-                          </div>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
-                            {artifact.relativePath}
-                          </p>
-                          {artifactMeta ? (
-                            <p className="truncate text-[11px] text-muted-foreground">
-                              {artifact.artifactKey}
+                            <p
+                              className="mt-1 truncate text-xs text-muted-foreground"
+                              title={artifact.artifactKey}
+                            >
+                              {artifact.relativePath}
                             </p>
-                          ) : null}
+                          </div>
+                          <Badge
+                            variant={artifact.exists ? "secondary" : "outline"}
+                          >
+                            {artifact.exists ? "present" : "not generated"}
+                          </Badge>
                         </div>
-                        <Badge
-                          variant={artifact.exists ? "secondary" : "outline"}
-                        >
-                          {artifact.exists
-                            ? "present"
-                            : artifact.required
-                              ? "required"
-                              : "optional"}
-                        </Badge>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </CardContent>
             </Card>
 

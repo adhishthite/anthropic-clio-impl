@@ -144,7 +144,13 @@ function evalRepresentationHelp(name: string): string {
   );
 }
 
-function HelpTooltip({ content }: { content: string }) {
+function HelpTooltip({
+  content,
+  ariaLabel = "More information",
+}: {
+  content: string;
+  ariaLabel?: string;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -152,7 +158,7 @@ function HelpTooltip({ content }: { content: string }) {
           type="button"
           tabIndex={-1}
           className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground"
-          aria-label="More information"
+          aria-label={ariaLabel}
         >
           <CircleHelp className="size-3.5" />
         </button>
@@ -188,6 +194,10 @@ const ROOT_ACCENT_PALETTE = [
   "#db2777",
   "#475569",
 ];
+
+function humanizeEnum(value: string): string {
+  return value.replace(/_/g, " ");
+}
 
 function normalizeProjectionMethod(projectionMethod: string | null): string {
   if (!projectionMethod || !projectionMethod.trim()) {
@@ -279,7 +289,8 @@ function ClusterMapTooltip({
 }
 
 function formatShare(value: number): string {
-  return `${(Math.max(0, Math.min(1, value)) * 100).toFixed(1)}%`;
+  const pct = Math.max(0, Math.min(1, value)) * 100;
+  return `${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`;
 }
 
 function metadataPreview(value: unknown): string {
@@ -765,6 +776,7 @@ export function RunVisualSummary({
                             {requestedHierarchyLevels}
                             <HelpTooltip
                               content={`Generated hierarchy depth vs requested hierarchy levels. Policy: ${hierarchyDepthPolicy ?? "adaptive"}. Requested levels are an upper bound.`}
+                              ariaLabel="About hierarchy depth"
                             />
                           </Badge>
                         </>
@@ -774,30 +786,57 @@ export function RunVisualSummary({
                       generatedHierarchyDepth < requestedHierarchyLevels &&
                       hierarchyDepthStopReason ? (
                         <Badge variant="outline" className="gap-1">
-                          reason {hierarchyDepthStopReason}
+                          reason {humanizeEnum(hierarchyDepthStopReason)}
                           {hierarchyWhyNotDeeper ? (
-                            <HelpTooltip content={hierarchyWhyNotDeeper} />
+                            <HelpTooltip
+                              content={hierarchyWhyNotDeeper}
+                              ariaLabel="About hierarchy stop reason"
+                            />
                           ) : null}
                         </Badge>
                       ) : null}
                     </div>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="p-4">
                     {(() => {
-                      const sortedClusters = (
+                      const topLevel = (
                         visuals?.hierarchy?.topLevelClusters ?? []
-                      )
-                        .toSorted((a, b) => {
-                          const sizeA = nodeById.get(a.id)?.size ?? 0;
-                          const sizeB = nodeById.get(b.id)?.size ?? 0;
-                          return sizeB - sizeA;
-                        })
-                        .slice(0, 4);
+                      ).toSorted((a, b) => {
+                        const sizeA = nodeById.get(a.id)?.size ?? 0;
+                        const sizeB = nodeById.get(b.id)?.size ?? 0;
+                        return sizeB - sizeA;
+                      });
+
+                      // When only 1 top-level cluster, auto-expand to show its children
+                      const displayItems =
+                        topLevel.length === 1
+                          ? (() => {
+                              const singleRoot = topLevel[0];
+                              const childIds =
+                                childIdsByParent.get(singleRoot.id) ?? [];
+                              const children = childIds
+                                .map((id) => nodeById.get(id))
+                                .filter((n): n is NonNullable<typeof n> => !!n)
+                                .sort((a, b) => b.size - a.size)
+                                .slice(0, 6)
+                                .map((child) => ({
+                                  id: child.id,
+                                  name: child.name,
+                                  description: child.description,
+                                  childCount:
+                                    childIdsByParent.get(child.id)?.length ?? 0,
+                                }));
+                              return children.length > 0
+                                ? children
+                                : topLevel.slice(0, 4);
+                            })()
+                          : topLevel.slice(0, 4);
+
                       return (
                         <div
-                          className={`grid gap-2 ${sortedClusters.length >= 2 ? "md:grid-cols-2" : ""}`}
+                          className={`grid gap-2 ${displayItems.length >= 2 ? "md:grid-cols-2" : ""}`}
                         >
-                          {sortedClusters.map((item) => {
+                          {displayItems.map((item) => {
                             const nodeSize = nodeById.get(item.id)?.size ?? 0;
                             const accent =
                               nodeAccentById.get(item.id) ??
@@ -818,15 +857,20 @@ export function RunVisualSummary({
                                 }}
                               >
                                 <div className="flex items-center justify-between gap-2">
-                                  <p className="text-sm font-medium">
+                                  <p className="text-sm font-medium text-foreground/90">
                                     {item.name}
                                   </p>
-                                  <Badge variant="outline">
-                                    children {item.childCount}
-                                  </Badge>
+                                  {item.childCount > 0 ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-xs"
+                                    >
+                                      children {item.childCount}
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 {item.description ? (
-                                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground/90">
                                     {item.description}
                                   </p>
                                 ) : null}
@@ -867,14 +911,20 @@ export function RunVisualSummary({
                     <div className="flex flex-wrap gap-2 text-xs">
                       <Badge variant="outline" className="gap-1">
                         points {visuals?.map?.totalPoints ?? 0}
-                        <HelpTooltip content="Number of clustered conversation summaries plotted on this map." />
+                        <HelpTooltip
+                          content="Number of clustered conversation summaries plotted on this map."
+                          ariaLabel="About points count"
+                        />
                       </Badge>
                       <Badge variant="outline" className="gap-1">
                         projection{" "}
                         {normalizeProjectionMethod(
                           visuals?.map?.projectionMethod ?? null,
                         )}
-                        <HelpTooltip content="Each point has 2 reduced coordinates. They are not raw business metrics - they are map coordinates derived from embedding similarity." />
+                        <HelpTooltip
+                          content="Each point has 2 reduced coordinates. They are not raw business metrics - they are map coordinates derived from embedding similarity."
+                          ariaLabel="About projection method"
+                        />
                       </Badge>
                     </div>
                   </CardHeader>
@@ -882,7 +932,12 @@ export function RunVisualSummary({
                     <div className="h-[360px] 2xl:h-[420px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart
-                          margin={{ top: 10, right: 10, bottom: 10, left: 0 }}
+                          margin={{
+                            top: 10,
+                            right: 10,
+                            bottom: 20,
+                            left: 10,
+                          }}
                         >
                           <XAxis
                             type="number"
@@ -893,6 +948,16 @@ export function RunVisualSummary({
                             )}
                             tick={false}
                             axisLine={{ stroke: "var(--border)" }}
+                            label={{
+                              value: projectionAxisLabel(
+                                visuals?.map?.projectionMethod ?? null,
+                                1,
+                              ),
+                              position: "insideBottom",
+                              offset: -10,
+                              fontSize: 11,
+                              fill: "var(--muted-foreground)",
+                            }}
                           />
                           <YAxis
                             type="number"
@@ -903,6 +968,17 @@ export function RunVisualSummary({
                             )}
                             tick={false}
                             axisLine={{ stroke: "var(--border)" }}
+                            label={{
+                              value: projectionAxisLabel(
+                                visuals?.map?.projectionMethod ?? null,
+                                2,
+                              ),
+                              angle: -90,
+                              position: "insideLeft",
+                              offset: 0,
+                              fontSize: 11,
+                              fill: "var(--muted-foreground)",
+                            }}
                           />
                           <ChartTooltip
                             cursor={{ strokeDasharray: "3 3" }}
@@ -921,18 +997,22 @@ export function RunVisualSummary({
                             )}
                           />
                           <Legend />
-                          <Scatter
-                            name="kept"
-                            data={keptPoints}
-                            fill="var(--color-chart-2)"
-                            opacity={0.7}
-                          />
-                          <Scatter
-                            name="filtered"
-                            data={filteredPoints}
-                            fill="var(--color-chart-4)"
-                            opacity={0.7}
-                          />
+                          {keptPoints.length > 0 ? (
+                            <Scatter
+                              name="kept"
+                              data={keptPoints}
+                              fill="var(--color-chart-2)"
+                              opacity={0.7}
+                            />
+                          ) : null}
+                          {filteredPoints.length > 0 ? (
+                            <Scatter
+                              name="filtered"
+                              data={filteredPoints}
+                              fill="var(--color-chart-4)"
+                              opacity={0.7}
+                            />
+                          ) : null}
                         </ScatterChart>
                       </ResponsiveContainer>
                     </div>
@@ -1024,7 +1104,10 @@ export function RunVisualSummary({
                                 >
                                   <div className="flex items-center gap-1.5">
                                     <span>{stage.label}</span>
-                                    <HelpTooltip content={stage.help} />
+                                    <HelpTooltip
+                                      content={stage.help}
+                                      ariaLabel={`About ${stage.label}`}
+                                    />
                                   </div>
                                   <span>
                                     {stage.passCount}/{stage.total} passed
@@ -1101,7 +1184,7 @@ export function RunVisualSummary({
               open={isHierarchyDialogOpen}
               onOpenChange={setIsHierarchyDialogOpen}
             >
-              <DialogContent className="h-[95dvh] w-[98vw] max-w-[98vw] overflow-hidden p-0 sm:max-w-[98vw]">
+              <DialogContent className="h-[95dvh] w-[98vw] max-w-[1600px] sm:max-w-[1600px] overflow-hidden p-0">
                 <DialogHeader className="border-b px-6 py-4">
                   <DialogTitle className="flex items-center gap-2">
                     <GitBranch className="size-4 text-primary" />
@@ -1111,22 +1194,23 @@ export function RunVisualSummary({
                     <span>
                       Navigate hierarchy groups and drill into leaf clusters.
                     </span>
-                    <Badge variant="outline" className="text-[11px]">
-                      nodes {hierarchyNodes.length}
-                    </Badge>
-                    <Badge variant="outline" className="text-[11px]">
+                    <Badge variant="outline" className="text-xs">
                       top-level {visuals?.hierarchy?.topLevelCount ?? 0}
                     </Badge>
-                    <Badge variant="outline" className="text-[11px]">
+                    <Badge variant="outline" className="text-xs">
                       leaf {visuals?.hierarchy?.leafCount ?? 0}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      nodes {hierarchyNodes.length}
                     </Badge>
                     {generatedHierarchyDepth !== null &&
                     requestedHierarchyLevels !== null ? (
-                      <Badge variant="outline" className="gap-1 text-[11px]">
+                      <Badge variant="outline" className="gap-1 text-xs">
                         depth {generatedHierarchyDepth}/
                         {requestedHierarchyLevels}
                         <HelpTooltip
                           content={`Generated hierarchy depth vs requested levels. Policy: ${hierarchyDepthPolicy ?? "adaptive"}.`}
+                          ariaLabel="About hierarchy depth"
                         />
                       </Badge>
                     ) : null}
@@ -1144,30 +1228,45 @@ export function RunVisualSummary({
                   >
                     {/* Controls bar */}
                     <div className="flex flex-wrap items-center gap-3 border-b px-6 py-3.5">
-                      <Button
-                        size="default"
-                        variant="outline"
-                        className="h-9 px-4 text-sm"
-                        onClick={() => {
-                          const allNonLeaf = new Set<string>();
-                          for (const node of hierarchyNodes) {
-                            if (node.level > 0) {
-                              allNonLeaf.add(node.id);
-                            }
-                          }
-                          setExpandedNodeIds(allNonLeaf);
-                        }}
-                      >
-                        Expand all
-                      </Button>
-                      <Button
-                        size="default"
-                        variant="outline"
-                        className="h-9 px-4 text-sm"
-                        onClick={() => setExpandedNodeIds(new Set(rootNodeIds))}
-                      >
-                        Collapse
-                      </Button>
+                      {(() => {
+                        const allNonLeafIds = hierarchyNodes
+                          .filter((n) => n.level > 0)
+                          .map((n) => n.id);
+                        const allExpanded =
+                          allNonLeafIds.length > 0 &&
+                          allNonLeafIds.every((id) => expandedNodeIds.has(id));
+                        const noneExpandedBeyondRoots =
+                          expandedNodeIds.size === 0 ||
+                          [...expandedNodeIds].every((id) =>
+                            rootNodeIds.includes(id),
+                          );
+                        return (
+                          <>
+                            <Button
+                              size="default"
+                              variant={allExpanded ? "default" : "outline"}
+                              className="h-9 px-4 text-sm"
+                              disabled={allExpanded}
+                              onClick={() => {
+                                setExpandedNodeIds(new Set(allNonLeafIds));
+                              }}
+                            >
+                              Expand all
+                            </Button>
+                            <Button
+                              size="default"
+                              variant="outline"
+                              className="h-9 px-4 text-sm"
+                              disabled={noneExpandedBeyondRoots}
+                              onClick={() =>
+                                setExpandedNodeIds(new Set(rootNodeIds))
+                              }
+                            >
+                              Collapse
+                            </Button>
+                          </>
+                        );
+                      })()}
                       <div className="relative ml-auto min-w-56 max-w-md flex-1">
                         <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                         <Input
@@ -1187,10 +1286,9 @@ export function RunVisualSummary({
                     </div>
 
                     {/* Column headers */}
-                    <div className="grid grid-cols-[1fr_84px_76px_84px_130px] gap-3 border-b px-6 py-2.5 text-sm font-medium text-muted-foreground">
+                    <div className="grid grid-cols-[1fr_84px_84px_160px] gap-3 border-b px-6 py-2.5 text-sm font-medium text-muted-foreground">
                       <span>Name</span>
                       <span className="text-right">Size</span>
-                      <span className="text-right">Share</span>
                       <span className="text-center">Level</span>
                       <span>Distribution</span>
                     </div>
@@ -1236,7 +1334,7 @@ export function RunVisualSummary({
                                   });
                                 }
                               }}
-                              className={`grid w-full grid-cols-[1fr_84px_76px_84px_130px] items-center gap-3 px-6 py-3 text-left text-[15px] transition-colors hover:bg-muted/40 ${
+                              className={`grid w-full grid-cols-[1fr_84px_84px_160px] items-center gap-3 px-6 py-3 text-left text-[15px] transition-colors hover:bg-muted/40 ${
                                 isSelected
                                   ? "border-l-2 border-l-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/20"
                                   : isMatch
@@ -1272,23 +1370,19 @@ export function RunVisualSummary({
                               <span className="text-right font-mono text-muted-foreground">
                                 {row.node.size}
                               </span>
-                              {/* Share */}
-                              <span className="text-right font-mono text-muted-foreground">
-                                {formatShare(row.shareOfRun)}
-                              </span>
                               {/* Level badge */}
                               <div className="text-center">
                                 <span
-                                  className={`inline-block rounded-full border px-2.5 py-0.5 text-sm font-medium ${levelPillClass(row.node.level)}`}
+                                  className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${levelPillClass(row.node.level)}`}
                                 >
                                   {row.node.level <= 0
                                     ? "Leaf"
                                     : row.node.level === 1
-                                      ? "Sub"
-                                      : "Top"}
+                                      ? "Group"
+                                      : "Root"}
                                 </span>
                               </div>
-                              {/* Distribution bar */}
+                              {/* Distribution bar with share % */}
                               <div className="flex items-center gap-2">
                                 <div className="h-3.5 flex-1 rounded-full bg-muted/40">
                                   <div
@@ -1300,6 +1394,9 @@ export function RunVisualSummary({
                                     }}
                                   />
                                 </div>
+                                <span className="shrink-0 text-xs font-mono text-muted-foreground">
+                                  {formatShare(row.shareOfRun)}
+                                </span>
                               </div>
                             </button>
                           );
@@ -1351,13 +1448,27 @@ export function RunVisualSummary({
                             </Button>
                           </div>
                           <div className="mt-2.5 flex flex-wrap gap-2">
-                            <Badge variant="outline" className="text-xs">
-                              conversations{" "}
-                              {leafRecordsPayload?.totalConversations ?? "..."}
-                            </Badge>
-                            <Badge variant="outline" className="text-xs">
-                              shown {filteredLeafRecords.length}
-                            </Badge>
+                            {(() => {
+                              const total =
+                                leafRecordsPayload?.totalConversations ?? null;
+                              const shown = filteredLeafRecords.length;
+                              const isFiltered =
+                                total !== null && shown < total;
+                              return isFiltered ? (
+                                <>
+                                  <Badge variant="outline" className="text-xs">
+                                    {total} conversations
+                                  </Badge>
+                                  <Badge variant="outline" className="text-xs">
+                                    shown {shown}
+                                  </Badge>
+                                </>
+                              ) : (
+                                <Badge variant="outline" className="text-xs">
+                                  {total ?? "..."} conversations
+                                </Badge>
+                              );
+                            })()}
                             <Badge variant="outline" className="text-xs">
                               metadata{" "}
                               {leafRecordsPayload?.metadataAvailable
@@ -1412,15 +1523,13 @@ export function RunVisualSummary({
                                           {record.facet.task || "Untitled task"}
                                         </p>
                                         {record.facet.concerningScore !==
-                                        null ? (
+                                          null &&
+                                        record.facet.concerningScore >= 3 ? (
                                           <span
                                             className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${
                                               record.facet.concerningScore >= 4
                                                 ? "border-red-300/70 bg-red-100/80 text-red-700"
-                                                : record.facet
-                                                      .concerningScore >= 3
-                                                  ? "border-amber-300/70 bg-amber-100/80 text-amber-700"
-                                                  : "border-emerald-300/70 bg-emerald-100/80 text-emerald-700"
+                                                : "border-amber-300/70 bg-amber-100/80 text-amber-700"
                                             }`}
                                           >
                                             concern{" "}
@@ -1451,8 +1560,13 @@ export function RunVisualSummary({
                                     </p>
                                   )}
                                   <div className="mt-2.5 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                    <span className="font-mono">
-                                      {record.conversationId}
+                                    <span
+                                      className="font-mono"
+                                      title={record.conversationId}
+                                    >
+                                      {record.conversationId.length > 8
+                                        ? `${record.conversationId.slice(0, 8)}...`
+                                        : record.conversationId}
                                     </span>
                                     <span className="font-mono opacity-60">
                                       user {record.userId || "n/a"}

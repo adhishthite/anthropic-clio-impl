@@ -1,0 +1,25 @@
+Run the code simplifier agent as multi-agent set up for the UI and the Python code.. think hard
+
+---
+
+<bash-input>pwd</bash-input>
+
+---
+
+<bash-stdout>/Users/adhishthite/Projects/temp-projects/ant-clio</bash-stdout><bash-stderr></bash-stderr>
+
+---
+
+I get this right after I start a run .. because it's not created yet..
+
+---
+
+Looks lonely.. below Run Detail, put actual Run ID in bigger font..
+
+---
+
+what else can we add to make it better and informative? and also can we make it sticky?
+
+---
+
+commit this and push

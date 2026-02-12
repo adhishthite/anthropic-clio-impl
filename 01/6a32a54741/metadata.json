@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.2",
+  "checkpoint_id": "016a32a54741",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "UI_SIMPLIFICATION_SUMMARY.md",
+    "clio-ui-v2/src/app/api/runs/jobs/[runId]/logs/route.ts",
+    "clio-ui-v2/src/app/runs/[runId]/run-detail-content.tsx",
+    "clio-ui-v2/src/components/clio/live-run-dashboard.tsx",
+    "clio-ui-v2/src/components/clio/run-orchestration-panel.tsx",
+    "clio-ui-v2/src/lib/clio-run-jobs.ts",
+    "clio-ui-v2/src/lib/clio-types.ts",
+    "clio-ui-v2/src/lib/format-utils.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/01/6a32a54741/0/metadata.json",
+      "transcript": "/01/6a32a54741/0/full.jsonl",
+      "context": "/01/6a32a54741/0/context.md",
+      "content_hash": "/01/6a32a54741/0/content_hash.txt",
+      "prompt": "/01/6a32a54741/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1767,
+    "cache_creation_tokens": 376467,
+    "cache_read_tokens": 4419741,
+    "output_tokens": 29691,
+    "api_call_count": 57
+  }
+}

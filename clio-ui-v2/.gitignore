@@ -87,3 +87,5 @@ storybook-static/
 !src/app/api/runs/**
 !src/app/api/stream/
 !src/app/api/stream/**
+
+mockups/

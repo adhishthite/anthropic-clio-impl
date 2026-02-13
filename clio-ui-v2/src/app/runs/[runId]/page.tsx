@@ -16,7 +16,7 @@ export default async function RunPage({ params }: RunPageProps) {
     <div>
       <nav
         aria-label="Breadcrumb"
-        className="mx-auto flex max-w-[2280px] items-center gap-1.5 px-3 pt-4 pb-0 text-sm text-muted-foreground md:px-6 2xl:px-8"
+        className="mx-auto flex max-w-[2280px] flex-wrap items-center gap-1.5 px-3 pt-4 pb-0 text-xs text-muted-foreground sm:text-sm md:px-6 2xl:px-8"
       >
         <Link href="/" className="hover:text-foreground transition-colors">
           CLIO
@@ -26,7 +26,7 @@ export default async function RunPage({ params }: RunPageProps) {
           Runs
         </Link>
         <ChevronRight className="size-3.5" />
-        <span className="truncate font-medium text-foreground">
+        <span className="max-w-[60vw] truncate font-medium text-foreground sm:max-w-none">
           {decodedRunId}
         </span>
       </nav>

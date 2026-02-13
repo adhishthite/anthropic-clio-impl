@@ -3,6 +3,8 @@ import path from "node:path";
 
 import type {
   ArtifactStatus,
+  ConversationDetailResponse,
+  ConversationMessage,
   PhaseStatus,
   PhaseTimelineItem,
   RunClusterConversationRecord,
@@ -1336,5 +1338,220 @@ export async function loadClusterConversations(
     totalConversations: records.length,
     metadataAvailable,
     records,
+  };
+}
+
+export async function loadConversationDetail(
+  runId: string,
+  conversationId: string,
+): Promise<ConversationDetailResponse | null> {
+  const trimmedRunId = runId.trim();
+  const trimmedConversationId = conversationId.trim();
+  if (!trimmedRunId || !trimmedConversationId) {
+    return null;
+  }
+
+  const runsRoot = normalizeRunsRoot();
+  const runs = await discoverRuns(0);
+  const selectedRun = runs.find((item) => item.runId === trimmedRunId);
+  if (!selectedRun) {
+    return null;
+  }
+
+  const runRoot = selectedRun.runRoot;
+  const manifestPayload = await readJsonFile(
+    path.join(runRoot, "run_manifest.json"),
+  );
+  const expectedConversationCount = Math.max(
+    asNumber(manifestPayload?.conversation_count_processed, 0),
+    asNumber(manifestPayload?.conversation_count_input, 0),
+  );
+  const readCap = Math.max(1024, expectedConversationCount + 256);
+
+  // Load messages from conversation.updated.jsonl (enriched) or conversation.jsonl (raw)
+  const messages: ConversationMessage[] = [];
+  let facetFromUpdated: JsonRecord | null = null;
+  let clusterFromUpdated: JsonRecord | null = null;
+
+  const updatedRows = await readJsonlFile(
+    path.join(runRoot, "conversation.updated.jsonl"),
+    readCap,
+  );
+  // The updated JSONL does not have conversation_id at the top level,
+  // but has analysis.facets.conversation_id inside. We match by conversation_id
+  // from the facets sub-object.
+  for (const row of updatedRows) {
+    const analysis = asRecord(row.analysis);
+    const facets = analysis ? asRecord(analysis.facets) : null;
+    const rowConversationId = facets ? asString(facets.conversation_id) : "";
+    if (rowConversationId === trimmedConversationId) {
+      const rawMessages = asArray(row.messages);
+      for (const msg of rawMessages) {
+        const msgRecord = asRecord(msg);
+        if (msgRecord) {
+          messages.push({
+            role: asString(msgRecord.role),
+            content: asString(msgRecord.content),
+          });
+        }
+      }
+      facetFromUpdated = facets;
+      clusterFromUpdated = analysis ? asRecord(analysis.clustering) : null;
+      break;
+    }
+  }
+
+  // Fallback: if not found in updated, try raw conversation.jsonl using index matching
+  if (messages.length === 0) {
+    const rawRows = await readJsonlFile(
+      path.join(runRoot, "conversation.jsonl"),
+      readCap,
+    );
+    // conversation.jsonl has no conversation_id, so we need facets to match by index
+    const facetRows = await readJsonlFile(
+      path.join(runRoot, "facets", "facets.jsonl"),
+      readCap,
+    );
+    let matchIndex = -1;
+    for (let i = 0; i < facetRows.length; i++) {
+      if (asString(facetRows[i].conversation_id) === trimmedConversationId) {
+        matchIndex = i;
+        break;
+      }
+    }
+    if (matchIndex >= 0 && matchIndex < rawRows.length) {
+      const rawRow = rawRows[matchIndex];
+      const rawMessages = asArray(rawRow.messages);
+      for (const msg of rawMessages) {
+        const msgRecord = asRecord(msg);
+        if (msgRecord) {
+          messages.push({
+            role: asString(msgRecord.role),
+            content: asString(msgRecord.content),
+          });
+        }
+      }
+    }
+  }
+
+  // Load facet data
+  let facetRecord: JsonRecord | null = facetFromUpdated;
+  if (!facetRecord) {
+    const facetRows = await readJsonlFile(
+      path.join(runRoot, "facets", "facets.jsonl"),
+      readCap,
+    );
+    for (const row of facetRows) {
+      if (asString(row.conversation_id) === trimmedConversationId) {
+        facetRecord = row;
+        break;
+      }
+    }
+  }
+
+  // Load cluster assignment
+  const assignmentRows = await readJsonlFile(
+    path.join(runRoot, "clusters", "base_assignments.jsonl"),
+    readCap,
+  );
+  let assignmentRecord: JsonRecord | null = null;
+  for (const row of assignmentRows) {
+    if (asString(row.conversation_id) === trimmedConversationId) {
+      assignmentRecord = row;
+      break;
+    }
+  }
+
+  // Load cluster label
+  let clusterName = "";
+  let clusterDescription = "";
+  let keptByThreshold = false;
+  const clusterId = assignmentRecord
+    ? asNumber(assignmentRecord.cluster_id, -1)
+    : clusterFromUpdated
+      ? asNumber(clusterFromUpdated.cluster_id, -1)
+      : -1;
+
+  if (clusterFromUpdated) {
+    clusterName = asString(clusterFromUpdated.cluster_name);
+    clusterDescription = asString(clusterFromUpdated.cluster_description);
+    keptByThreshold = boolValue(clusterFromUpdated.kept_by_threshold);
+  }
+
+  if (!clusterName && clusterId >= 0) {
+    const labeledPayload = await readJsonFile(
+      path.join(runRoot, "clusters", "labeled_clusters.json"),
+    );
+    const clusters = labeledPayload ? asArray(labeledPayload.clusters) : [];
+    for (const cluster of clusters) {
+      const rec = asRecord(cluster);
+      if (rec && asNumber(rec.cluster_id, -1) === clusterId) {
+        clusterName = asString(rec.name);
+        clusterDescription = asString(rec.description);
+        keptByThreshold = boolValue(rec.kept_by_threshold);
+        break;
+      }
+    }
+  }
+
+  // Load user metadata from input dataset
+  let userId = assignmentRecord ? asString(assignmentRecord.user_id) : "";
+  let timestampUtc: string | null = null;
+  let userMetadata: JsonRecord | null = null;
+  const inputDatasetPath = asString(manifestPayload?.input_dataset_path);
+  if (inputDatasetPath) {
+    const resolvedInputPath = path.isAbsolute(inputDatasetPath)
+      ? inputDatasetPath
+      : path.resolve(process.cwd(), inputDatasetPath);
+    const inputRows = await readJsonlFile(resolvedInputPath, readCap);
+    for (const row of inputRows) {
+      if (asString(row.conversation_id) === trimmedConversationId) {
+        userId = userId || asString(row.user_id);
+        timestampUtc = asString(row.timestamp) || null;
+        userMetadata = asRecord(row.metadata);
+        break;
+      }
+    }
+  }
+
+  return {
+    generatedAtUtc: new Date().toISOString(),
+    runsRoot,
+    runId: selectedRun.runId,
+    conversationId: trimmedConversationId,
+    userId,
+    timestampUtc,
+    userMetadata,
+    messages,
+    facet: facetRecord
+      ? {
+          summary: asString(facetRecord.summary),
+          task: asString(facetRecord.task),
+          language: asString(facetRecord.language),
+          languageConfidence: toNullableNumber(facetRecord.language_confidence),
+          concerningScore: toNullableNumber(facetRecord.concerning_score),
+          turnCount: toNullableNumber(facetRecord.turn_count),
+          messageCount: toNullableNumber(facetRecord.message_count),
+          userMessageCount: toNullableNumber(facetRecord.user_message_count),
+          assistantMessageCount: toNullableNumber(
+            facetRecord.assistant_message_count,
+          ),
+          avgUserMessageLength: toNullableNumber(
+            facetRecord.avg_user_message_length,
+          ),
+          avgAssistantMessageLength: toNullableNumber(
+            facetRecord.avg_assistant_message_length,
+          ),
+        }
+      : null,
+    cluster:
+      clusterId >= 0
+        ? {
+            clusterId,
+            clusterName,
+            clusterDescription,
+            keptByThreshold,
+          }
+        : null,
   };
 }

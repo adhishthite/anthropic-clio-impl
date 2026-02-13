@@ -685,7 +685,7 @@ export function RunOrchestrationPanel({
 
   return (
     <div className="space-y-4">
-      <Card className="clio-panel border-border/70">
+      <Card className="clio-panel clio-accent-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Workflow className="size-4 text-primary" />
@@ -1151,8 +1151,8 @@ export function RunOrchestrationPanel({
         </CardContent>
       </Card>
 
-      <div className="grid min-h-[500px] gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-        <Card className="clio-panel border-border/70">
+      <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr] xl:items-stretch">
+        <Card className="clio-panel clio-accent-card flex min-h-0 max-h-[30rem] flex-col">
           <CardHeader>
             <CardTitle className="text-lg">Background jobs</CardTitle>
             <CardDescription>
@@ -1179,12 +1179,12 @@ export function RunOrchestrationPanel({
               {jobsStreamHealth.totalErrors}
             </p>
             {jobsData?.runsRoot ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="break-all text-xs text-muted-foreground">
                 runs root {jobsData.runsRoot}
               </p>
             ) : null}
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto">
             {jobsError && (
               <Alert variant="destructive">
                 <AlertTriangle />
@@ -1217,8 +1217,8 @@ export function RunOrchestrationPanel({
                   )}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{job.runId}</p>
+                    <div className="min-w-0">
+                      <p className="break-all font-medium">{job.runId}</p>
                       <p className="text-xs text-muted-foreground">
                         Started {formatDateTime(job.startedAtUtc)} · pid{" "}
                         {job.pid}
@@ -1264,7 +1264,7 @@ export function RunOrchestrationPanel({
           </CardContent>
         </Card>
 
-        <Card className="clio-panel flex flex-col border-border/70">
+        <Card className="clio-panel clio-accent-card flex min-h-0 max-h-[30rem] flex-1 flex-col">
           <CardHeader>
             <CardTitle className="text-lg">Live log tail</CardTitle>
             <CardDescription>
@@ -1278,7 +1278,7 @@ export function RunOrchestrationPanel({
             </p>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="flex items-end gap-3">
+            <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end">
               <div className="min-w-0 flex-1 space-y-2">
                 <Label htmlFor="run-log-selector">Run</Label>
                 <Select
@@ -1297,7 +1297,7 @@ export function RunOrchestrationPanel({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="w-28 space-y-2">
+              <div className="w-full shrink-0 space-y-2 sm:w-28">
                 <Label htmlFor="log-offset">Start line</Label>
                 <Input
                   id="log-offset"
@@ -1344,8 +1344,8 @@ export function RunOrchestrationPanel({
             </div>
 
             {logData ? (
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="min-w-0 break-all text-xs text-muted-foreground">
                   {logOffsetInput
                     ? `Lines ${Number(logOffsetInput)}-${Number(logOffsetInput) + logData.lineCount} of ${logData.totalLineCount}`
                     : `${logData.lineCount} lines (tail)`}{" "}

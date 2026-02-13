@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AgentationInit } from "@/components/clio/agentation-init";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Toaster } from "@/components/ui/sonner";
@@ -28,16 +29,37 @@ export default function RootLayout({
         >
           {/* TooltipProvider is required for all Tooltip components - do not remove */}
           <TooltipProvider>
-            <header className="fixed inset-x-0 top-0 z-50 flex h-11 items-center justify-between border-b border-border/40 bg-background/60 px-4 backdrop-blur-lg md:px-6">
+            <AgentationInit />
+            <header className="fixed inset-x-0 top-0 z-50 flex h-14 items-center justify-between border-b border-border/40 bg-background/60 px-3 backdrop-blur-lg sm:h-16 sm:px-6">
               <Link
                 href="/"
-                className="text-sm font-semibold tracking-tight text-foreground/90 hover:text-foreground"
+                className="max-w-[72vw] truncate text-sm font-semibold tracking-tight text-foreground/90 hover:text-foreground sm:max-w-none"
               >
-                CLIO
+                CLIO | Anthropic&apos;s Conversational Analysis
               </Link>
               <ThemeToggle />
             </header>
-            <div className="pt-11">{children}</div>
+            <div className="min-h-screen pt-14 pb-14 sm:pt-16 sm:pb-12">
+              {children}
+            </div>
+            <footer className="fixed inset-x-0 bottom-0 z-40 flex h-12 items-center justify-center border-t border-border/40 bg-background/60 px-3 backdrop-blur-lg sm:px-4">
+              <p className="text-center text-[11px] text-muted-foreground sm:text-xs">
+                Created with{" "}
+                <span aria-label="love" role="img">
+                  ❤️
+                </span>{" "}
+                by{" "}
+                <a
+                  href="https://adhishthite.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-foreground/90 hover:text-foreground"
+                >
+                  Adhish Thite
+                </a>{" "}
+                in 🇮🇳 · <em className="italic">Assisted by AI</em>
+              </p>
+            </footer>
           </TooltipProvider>
           <Toaster />
         </ThemeProvider>

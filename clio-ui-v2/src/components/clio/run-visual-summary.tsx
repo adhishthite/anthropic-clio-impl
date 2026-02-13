@@ -1292,7 +1292,7 @@ export function RunVisualSummary({
                     </div>
 
                     {/* Column headers */}
-                    <div className="grid grid-cols-[1fr_84px_84px_160px] gap-3 border-b px-6 py-2.5 text-sm font-medium text-muted-foreground">
+                    <div className="grid min-w-0 grid-cols-[1fr_72px_72px_112px] gap-2 border-b px-4 py-2.5 text-xs font-medium text-muted-foreground sm:grid-cols-[1fr_84px_84px_160px] sm:gap-3 sm:px-6 sm:text-sm">
                       <span>Name</span>
                       <span className="text-right">Size</span>
                       <span className="text-center">Level</span>
@@ -1341,7 +1341,7 @@ export function RunVisualSummary({
                                 }
                               }}
                               className={cn(
-                                "grid w-full grid-cols-[1fr_84px_84px_160px] items-center gap-3 px-6 py-3 text-left text-[15px] transition-colors hover:bg-muted/40",
+                                "grid w-full grid-cols-[1fr_72px_72px_112px] items-center gap-2 px-4 py-3 text-left text-sm transition-colors hover:bg-muted/40 sm:gap-3 sm:px-6 sm:text-[15px]",
                                 isSelected &&
                                   "border-l-2 border-l-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/20",
                                 !isSelected && isMatch && "bg-primary/5",

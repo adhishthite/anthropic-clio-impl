@@ -1320,6 +1320,7 @@ def run_phase3_base_clustering(
         hdbscan_min_samples=settings.clustering_hdbscan_min_samples,
         noise_policy=settings.clustering_noise_policy,
         random_seed=settings.random_seed,
+        progress_callback=progress_callback,
     )
     labels = clustering_result.labels
     centroids = clustering_result.centroids
@@ -1331,6 +1332,8 @@ def run_phase3_base_clustering(
         min_unique_users=settings.min_unique_users,
         min_conversations_per_cluster=settings.min_conversations_per_cluster,
     )
+    if progress_callback is not None:
+        progress_callback(1, 1, "build_cluster_outputs")
 
     clusters_dir = ensure_directory(run_root / "clusters")
     viz_dir = ensure_directory(run_root / "viz")
@@ -1343,6 +1346,8 @@ def run_phase3_base_clustering(
         method=settings.viz_projection_method,
         random_seed=settings.random_seed,
     )
+    if progress_callback is not None:
+        progress_callback(1, 1, "project_embeddings_2d")
     map_points = build_map_points(
         facets=facets,
         assignments=assignments,
@@ -1365,6 +1370,8 @@ def run_phase3_base_clustering(
         facets=facets,
         assignments=assignments,
     )
+    if progress_callback is not None:
+        progress_callback(1, 1, "save_artifacts")
     save_json(
         clusters_dir / "base_clusters.json",
         {

@@ -1,5 +1,5 @@
-import { RunHome } from "@/components/clio/run-home";
+import { ClioHome } from "@/components/clio/clio-home";
 
 export default function Home() {
-  return <RunHome />;
+  return <ClioHome />;
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import ceil
 
@@ -232,6 +233,7 @@ def _refine_cluster_count_hybrid(
     labels: np.ndarray,
     target_k: int,
     random_seed: int,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> tuple[np.ndarray, int]:
     """Split largest clusters with local k-means until target_k or no viable split."""
 
@@ -266,6 +268,10 @@ def _refine_cluster_count_hybrid(
         next_label = max(unique) + 1
         refined[member_indexes[sub_labels == 1]] = next_label
         split_count += 1
+
+        if progress_callback is not None:
+            current_k = len({int(label) for label in refined.tolist()})
+            progress_callback(current_k, target_k, "hybrid_refine")
 
     return refined, split_count
 
@@ -316,6 +322,7 @@ def fit_base_clusters(
     hdbscan_min_samples: int,
     noise_policy: str,
     random_seed: int,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> BaseClusteringResult:
     """Fit base clusters using k-means, HDBSCAN, or a hybrid strategy."""
 
@@ -383,11 +390,15 @@ def fit_base_clusters(
     raw_labels = model.fit_predict(embeddings).astype(int)
     raw_cluster_count = len({int(label) for label in raw_labels.tolist() if int(label) >= 0})
     noise_count = int(np.count_nonzero(raw_labels < 0))
+    if progress_callback is not None:
+        progress_callback(1, 1, "hdbscan_fit")
     adjusted_labels, effective_noise_policy = _apply_noise_policy(
         embeddings=embeddings,
         labels=raw_labels,
         noise_policy=normalized_noise_policy,
     )
+    if progress_callback is not None:
+        progress_callback(1, 1, "noise_policy")
     fallback_reason: str | None = None
     refinement_splits = 0
 
@@ -397,6 +408,7 @@ def fit_base_clusters(
             labels=adjusted_labels,
             target_k=target.requested_k,
             random_seed=random_seed,
+            progress_callback=progress_callback,
         )
         current_k = len({int(label) for label in adjusted_labels.tolist()})
         if current_k < min(2, target.requested_k):
@@ -436,6 +448,8 @@ def fit_base_clusters(
         labels=normalized_labels,
         random_seed=random_seed,
     )
+    if progress_callback is not None:
+        progress_callback(1, 1, "clustering_metrics")
     return BaseClusteringResult(
         labels=normalized_labels,
         centroids=centroids,

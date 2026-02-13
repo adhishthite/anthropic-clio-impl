@@ -481,11 +481,7 @@ def transform_file(
             seen_ids.add(conv_id)
 
             # --- Extract user_id ---
-            user_id = (
-                _resolve_dotted(obj, mapping.user_id_key)
-                if mapping.user_id_key
-                else None
-            )
+            user_id = _resolve_dotted(obj, mapping.user_id_key) if mapping.user_id_key else None
             if user_id is None:
                 user_id = "unknown_user"
                 report.missing_user_id_count += 1
@@ -493,11 +489,7 @@ def transform_file(
                 user_id = str(user_id)
 
             # --- Extract timestamp ---
-            ts_raw = (
-                _resolve_dotted(obj, mapping.timestamp_key)
-                if mapping.timestamp_key
-                else None
-            )
+            ts_raw = _resolve_dotted(obj, mapping.timestamp_key) if mapping.timestamp_key else None
             ts_iso, ts_missing = _normalize_timestamp(ts_raw)
             if ts_missing:
                 report.missing_timestamp_count += 1

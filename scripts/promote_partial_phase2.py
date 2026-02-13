@@ -24,7 +24,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Promote partial Phase 2 to final.")
     parser.add_argument("run_id", help="Run ID to promote")
     parser.add_argument(
-        "--runs-root", default="runs", help="Root directory for runs (default: runs)",
+        "--runs-root",
+        default="runs",
+        help="Root directory for runs (default: runs)",
     )
     args = parser.parse_args()
 
@@ -118,15 +120,17 @@ def main() -> None:
     if error_count > 0:
         output_files["facets_errors_jsonl"] = str(errors_final.as_posix())
 
-    manifest.update({
-        "updated_at_utc": datetime.now(UTC).isoformat(),
-        "phase": "phase2_facet_extraction",
-        "completed_phases": sorted(completed_phases),
-        "conversation_count_processed": facet_count,
-        "facet_extraction_error_count": error_count,
-        "phase2_promoted_from_partial": True,
-        "output_files": output_files,
-    })
+    manifest.update(
+        {
+            "updated_at_utc": datetime.now(UTC).isoformat(),
+            "phase": "phase2_facet_extraction",
+            "completed_phases": sorted(completed_phases),
+            "conversation_count_processed": facet_count,
+            "facet_extraction_error_count": error_count,
+            "phase2_promoted_from_partial": True,
+            "output_files": output_files,
+        }
+    )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"[4/4] Updated manifest: completed_phases={sorted(completed_phases)}")
 

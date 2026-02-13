@@ -278,3 +278,38 @@ export type RunLogResponse = {
   totalLineCount: number;
   logTail: string;
 };
+
+export type ConversationMessage = {
+  role: string;
+  content: string;
+};
+
+export type ConversationDetailResponse = {
+  generatedAtUtc: string;
+  runsRoot: string;
+  runId: string;
+  conversationId: string;
+  userId: string;
+  timestampUtc: string | null;
+  userMetadata: Record<string, unknown> | null;
+  messages: ConversationMessage[];
+  facet: {
+    summary: string;
+    task: string;
+    language: string;
+    languageConfidence: number | null;
+    concerningScore: number | null;
+    turnCount: number | null;
+    messageCount: number | null;
+    userMessageCount: number | null;
+    assistantMessageCount: number | null;
+    avgUserMessageLength: number | null;
+    avgAssistantMessageLength: number | null;
+  } | null;
+  cluster: {
+    clusterId: number;
+    clusterName: string;
+    clusterDescription: string;
+    keptByThreshold: boolean;
+  } | null;
+};
